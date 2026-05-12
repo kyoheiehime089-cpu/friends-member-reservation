@@ -42,6 +42,7 @@ ADMIN_NOTIFICATION_EMAIL=
 3. `stores`、`menus`、`plans`、`members`、`admin_users`、`reservation_slots`、`reservations`、`reservation_rules`、`notification_settings`、`audit_logs`、`settings_change_logs`、`mail_logs` が作成されます。
 4. RLSは有効化済みです。会員は自分の会員情報と予約のみ閲覧し、管理者は管理テーブルを扱えます。
 5. 予約定員超過は `reservations_capacity_guard` トリガーで防止します。
+6. 予約グリッドの残席表示では `public.get_slot_booking_counts(slot_ids uuid[])` を使います。この関数がSupabaseに未適用だと、会員画面は誤った残席数を表示しないために予約枠を表示せず、管理者への問い合わせメッセージを出します。PR反映後は本番利用前に必ず `supabase/schema.sql` をSupabase SQL Editorで実行してください。
 
 ## 5. Vercel環境変数設定方法
 
@@ -95,7 +96,7 @@ on conflict (id) do update set role = excluded.role;
 
 1. `/login` からログインします。
 2. `/reserve` でメニューを選択します。
-3. 空き枠の残席を確認して「予約する」を押します。
+3. 日付×時間の予約グリッドから空き枠の残席を確認して「予約する」を押します。
 4. 完了メッセージが表示されます。
 5. `/my-reservations` で予約を確認できます。
 6. キャンセル期限後は「管理者へご連絡ください」と表示します。
@@ -125,6 +126,7 @@ on conflict (id) do update set role = excluded.role;
 
 - [ ] Vercel Previewで `/`、`/login`、`/reserve`、`/my-reservations`、`/admin`、`/admin/reservations`、`/admin/members`、`/admin/menus`、`/admin/plans`、`/admin/schedules` が表示される。
 - [ ] Supabase SQLを実行済み。
+- [ ] `public.get_slot_booking_counts(slot_ids uuid[])` がSupabaseに作成されている。
 - [ ] 初期オーナーを `admin_users` に登録済み。
 - [ ] 会員データを登録済み。
 - [ ] 予約枠を本番日程で作成済み。
@@ -163,6 +165,7 @@ on conflict (id) do update set role = excluded.role;
 
 - `reservation_slots` に対象枠があるか確認してください。
 - `members` に会員データがあるか確認してください。
+- `public.get_slot_booking_counts(slot_ids uuid[])` がSupabaseに作成されているか確認してください。
 - 定員超過、週回数制限、同日複数予約不可、同時予約数制限に該当しないか確認してください。
 
 ### メールが送れない
@@ -182,7 +185,7 @@ on conflict (id) do update set role = excluded.role;
 
 ## 予約ルール
 
-- 週カウントは月曜〜日曜。
+- 週カウントは日曜〜土曜。
 - 週1プランは週1回まで、週2プランは週2回まで。
 - 通い放題は週回数制限なし。
 - 同時予約数は初期値2枠まで。
