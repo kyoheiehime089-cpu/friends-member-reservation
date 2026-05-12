@@ -1,42 +1,13 @@
-"use client";
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import { useRouter } from 'next/navigation';
+import { AdminPage } from '@/components/AdminPage';
+import { ownerEmail, reservationRules } from '@/lib/initialData';
 
 export default function AdminSettingsPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    const checkAdmin = async () => {
-      const {
-        data: { session }
-      } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-      const { data: admin } = await supabase
-        .from('admin_profiles')
-        .select('id')
-        .eq('id', session.user.id)
-        .maybeSingle();
-      setIsAdmin(!!admin);
-      setLoading(false);
-    };
-    checkAdmin();
-  }, [router]);
-
-  if (loading) return null;
-  if (!isAdmin) {
-    return <p className="p-4">管理者権限がありません。</p>;
-  }
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">設定管理</h1>
-      <p>このページでは予約ルール、メール通知、権限など全体設定を管理できます。</p>
-      {/* TODO: implement settings management */}
-    </div>
+    <AdminPage title="基本設定" description="予約ルール、メール通知、初期オーナー、予約受付開始日を管理します。">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-black">予約ルール</h2><ul className="mt-3 space-y-2 text-sm font-semibold">{reservationRules.map((rule) => <li key={rule}>・{rule}</li>)}</ul></div>
+        <div className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5"><h2 className="text-xl font-black">通知・オーナー</h2><p className="mt-3 text-sm font-semibold">初期オーナーメール: {ownerEmail}</p><p className="mt-2 text-sm text-gray-700">メールAPIキーは環境変数にのみ設定し、GitHubには保存しません。</p></div>
+      </div>
+    </AdminPage>
   );
 }

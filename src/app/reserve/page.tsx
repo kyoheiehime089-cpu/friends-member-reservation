@@ -1,155 +1,74 @@
 "use client";
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import { useRouter } from 'next/navigation';
 
-interface Menu {
-  id: string;
-  name: string;
-  description?: string;
-}
-
-interface Schedule {
-  id: string;
-  date: string;
-  start_time: string;
-  end_time: string;
-  capacity: number;
-  menu_id: string;
-  menu: Menu;
-  reservations_count: number;
-}
+import { useMemo, useState } from 'react';
+import { AppShell } from '@/components/AppShell';
+import { SupabaseNotice } from '@/components/SupabaseNotice';
+import { getSupabaseClient } from '@/lib/supabaseClient';
+import { initialMenus, sampleSlots } from '@/lib/initialData';
 
 export default function ReservePage() {
-  const router = useRouter();
-  const [menus, setMenus] = useState<Menu[]>([]);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [selectedMenu, setSelectedMenu] = useState<Menu | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [booking, setBooking] = useState(false);
+  const [selectedMenuId, setSelectedMenuId] = useState(initialMenus[0].id);
   const [message, setMessage] = useState<string | null>(null);
+  const selectedMenu = initialMenus.find((menu) => menu.id === selectedMenuId) ?? initialMenus[0];
+  const visibleSlots = useMemo(() => sampleSlots.filter((slot) => slot.menuId === selectedMenuId), [selectedMenuId]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      // Ensure user is logged in
-      const {
-        data: { session }
-      } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-      // Fetch menus
-      const { data: menusData } = await supabase
-        .from('menus')
-        .select('id,name,description')
-        .eq('active', true)
-        .order('sort_order', { ascending: true });
-      setMenus(menusData || []);
-      // Fetch upcoming schedules for the next 14 days
-      const today = new Date();
-      const dateFrom = today.toISOString().split('T')[0];
-      const dateTo = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000)
-        .toISOString()
-        .split('T')[0];
-      const { data: schedulesData } = await supabase
-        .rpc('get_upcoming_schedules', { from_date: dateFrom, to_date: dateTo });
-      setSchedules(schedulesData || []);
-      setLoading(false);
-    };
-    fetchData();
-  }, [router]);
-
-  const handleReserve = async (schedule: Schedule) => {
-    setBooking(true);
-    setMessage(null);
-    // Create reservation
-    const { error } = await supabase.from('reservations').insert({
-      schedule_id: schedule.id,
-      profile_id: (await supabase.auth.getUser()).data?.user?.id
-    });
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage('予約が完了しました');
-      // refresh schedules
-      setSchedules((prev) =>
-        prev.map((s) =>
-          s.id === schedule.id
-            ? { ...s, reservations_count: s.reservations_count + 1 }
-            : s
-        )
-      );
+  const handleReserve = async (slotId: string) => {
+    const client = getSupabaseClient();
+    if (!client) {
+      setMessage('Supabase環境変数を設定してください。現在はデモ表示のため予約は保存されません。');
+      return;
     }
-    setBooking(false);
+
+    const { data: userData } = await client.auth.getUser();
+    if (!userData.user) {
+      setMessage('ログイン後に予約できます。');
+      return;
+    }
+
+    const { error } = await client.from('reservations').insert({ reservation_slot_id: slotId, member_id: userData.user.id, status: 'booked' });
+    setMessage(error ? error.message : '予約が完了しました。');
   };
 
-  if (loading) {
-    return <p className="p-4">読み込み中…</p>;
-  }
-
   return (
-    <div className="max-w-2xl mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-4">予約する</h1>
-      {message && <div className="mb-4 text-center text-green-600">{message}</div>}
-      {!selectedMenu ? (
+    <AppShell>
+      <div className="space-y-6">
+        <SupabaseNotice />
         <div>
-          <p className="mb-2">メニューを選択してください</p>
-          <ul className="space-y-2">
-            {menus.map((menu) => (
-              <li key={menu.id}>
-                <button
-                  onClick={() => setSelectedMenu(menu)}
-                  className="w-full bg-white border rounded p-3 text-left hover:bg-gray-50"
-                >
-                  <h2 className="font-semibold">{menu.name}</h2>
-                  {menu.description && (
-                    <p className="text-sm text-gray-600">{menu.description}</p>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <h1 className="text-3xl font-black">予約する</h1>
+          <p className="mt-2 text-gray-600">メニューを選択し、空き枠から予約してください。</p>
         </div>
-      ) : (
-        <div>
-          <button onClick={() => setSelectedMenu(null)} className="text-blue-600 mb-2">
-            ← メニュー一覧に戻る
-          </button>
-          <h2 className="text-xl font-semibold mb-2">{selectedMenu.name} の空き枠</h2>
-          <ul className="space-y-2">
-            {schedules
-              .filter((s) => s.menu_id === selectedMenu.id)
-              .map((schedule) => {
-                const spotsLeft = schedule.capacity - schedule.reservations_count;
-                return (
-                  <li key={schedule.id}>
-                    <div className="flex items-center justify-between bg-white border rounded p-3">
-                      <div>
-                        <p>
-                          {schedule.date} {schedule.start_time} - {schedule.end_time}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          残席: {spotsLeft > 0 ? spotsLeft : '満席'}
-                        </p>
-                      </div>
-                      <button
-                        disabled={spotsLeft <= 0 || booking}
-                        onClick={() => handleReserve(schedule)}
-                        className="bg-primary text-white px-3 py-1 rounded disabled:opacity-50"
-                      >
-                        予約する
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-          </ul>
-          {schedules.filter((s) => s.menu_id === selectedMenu.id).length === 0 && (
-            <p className="text-gray-600">現在予約可能な枠はありません</p>
-          )}
-        </div>
-      )}
-    </div>
+        {message && <div className="rounded-2xl bg-yellow-100 p-4 font-bold text-yellow-900">{message}</div>}
+        <section className="grid gap-3 md:grid-cols-3">
+          {initialMenus.map((menu) => (
+            <button key={menu.id} onClick={() => setSelectedMenuId(menu.id)} className={`rounded-2xl border p-5 text-left shadow-sm ${selectedMenuId === menu.id ? 'border-yellow-400 bg-yellow-100' : 'border-gray-200 bg-white'}`}>
+              <p className="text-lg font-black">{menu.name}</p>
+              <p className="mt-1 text-sm text-gray-600">定員 {menu.capacity}名</p>
+            </button>
+          ))}
+        </section>
+        <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="text-2xl font-black">{selectedMenu.name} の空き枠</h2>
+          <div className="mt-4 grid gap-3">
+            {visibleSlots.map((slot) => {
+              const remaining = selectedMenu.capacity - slot.reserved;
+              return (
+                <div key={slot.id} className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-lg font-black">{slot.date} {slot.time}</p>
+                    <p className="text-sm font-semibold text-gray-600">残席 {Math.max(remaining, 0)} / {selectedMenu.capacity}</p>
+                    {remaining <= 0 && <p className="text-sm font-bold text-red-600">満席です</p>}
+                  </div>
+                  <button disabled={remaining <= 0} onClick={() => handleReserve(slot.id)} className="rounded-full bg-gray-950 px-5 py-2 font-bold text-white disabled:opacity-40">予約する</button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+        <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5">
+          <h2 className="font-black">予約完了表示</h2>
+          <p className="mt-2 text-sm text-gray-700">予約が保存されると「予約が完了しました」と表示し、メール通知ログへ登録する設計です。</p>
+        </section>
+      </div>
+    </AppShell>
   );
 }
