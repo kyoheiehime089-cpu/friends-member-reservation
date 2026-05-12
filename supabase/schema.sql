@@ -148,6 +148,21 @@ begin
 end;
 $$;
 
+
+create or replace function public.get_slot_booking_counts(slot_ids uuid[])
+returns table (reservation_slot_id uuid, booked_count bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select r.reservation_slot_id, count(*)::bigint as booked_count
+  from public.reservations r
+  where r.reservation_slot_id = any(slot_ids)
+    and r.status = 'booked'
+  group by r.reservation_slot_id;
+$$;
+
 drop trigger if exists reservations_capacity_guard on public.reservations;
 create trigger reservations_capacity_guard
 before insert or update on public.reservations
@@ -172,7 +187,8 @@ create policy "public read active menus" on public.menus for select using (is_ac
 drop policy if exists "public read active plans" on public.plans;
 create policy "public read active plans" on public.plans for select using (is_active = true);
 drop policy if exists "public read open slots" on public.reservation_slots;
-create policy "public read open slots" on public.reservation_slots for select using (is_open = true);
+drop policy if exists "public read reservation slots" on public.reservation_slots;
+create policy "public read reservation slots" on public.reservation_slots for select using (true);
 
 drop policy if exists "members read own profile" on public.members;
 create policy "members read own profile" on public.members for select using (id = auth.uid() or public.is_admin());

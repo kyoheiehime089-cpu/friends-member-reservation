@@ -1,32 +1,305 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
+import { ReservationGrid, type ReservationGridSlot } from '@/components/ReservationGrid';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
-import { getSupabaseClient } from '@/lib/supabaseClient';
 import { initialMenus, sampleSlots } from '@/lib/initialData';
+import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabaseClient';
+
+type MenuOption = {
+  id: string;
+  name: string;
+  description?: string | null;
+  capacity: number;
+};
+
+type ReservationSlotRow = {
+  id: string;
+  menu_id: string;
+  starts_at: string;
+  ends_at: string;
+  capacity: number;
+  is_open: boolean;
+};
+
+type ReservationCountRow = {
+  reservation_slot_id: string;
+  booked_count: number;
+};
+
+type ReservationRow = {
+  reservation_slot_id: string;
+  member_id: string | null;
+  status: string | null;
+};
+
+type LoadResult = {
+  menus: MenuOption[];
+  slots: ReservationGridSlot[];
+  isDemo: boolean;
+};
+
+const gridTimeZone = 'Asia/Tokyo';
+const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
+  month: 'numeric',
+  day: 'numeric',
+  timeZone: gridTimeZone
+});
+const weekdayFormatter = new Intl.DateTimeFormat('ja-JP', {
+  weekday: 'short',
+  timeZone: gridTimeZone
+});
+const dateKeyFormatter = new Intl.DateTimeFormat('sv-SE', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: gridTimeZone
+});
+const timeFormatter = new Intl.DateTimeFormat('ja-JP', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: gridTimeZone
+});
+
+function toGridSlot(params: {
+  id: string;
+  startsAt: string;
+  capacity: number;
+  bookedCount: number;
+  isOpen: boolean;
+  isBookedByCurrentUser: boolean;
+  now: Date;
+}): ReservationGridSlot {
+  const startsAt = new Date(params.startsAt);
+  const bookedCount = params.bookedCount;
+  const remainingSeats = params.capacity - bookedCount;
+
+  return {
+    id: params.id,
+    dateKey: dateKeyFormatter.format(startsAt),
+    dateLabel: dateFormatter.format(startsAt),
+    weekdayLabel: weekdayFormatter.format(startsAt),
+    timeLabel: timeFormatter.format(startsAt),
+    capacity: params.capacity,
+    bookedCount,
+    remainingSeats,
+    isOpen: params.isOpen,
+    isPast: startsAt <= params.now,
+    isBookedByCurrentUser: params.isBookedByCurrentUser
+  };
+}
+
+function buildDemoData(selectedMenuId: string): LoadResult {
+  const menus = initialMenus.map((menu) => ({
+    id: menu.id,
+    name: menu.name,
+    description: menu.description,
+    capacity: menu.capacity
+  }));
+  const now = new Date();
+  const slots = sampleSlots
+    .filter((slot) => slot.menuId === selectedMenuId)
+    .map((slot) => {
+      const menu = menus.find((item) => item.id === slot.menuId) ?? menus[0];
+      return toGridSlot({
+        id: slot.id,
+        startsAt: `${slot.date}T${slot.time}:00+09:00`,
+        capacity: menu.capacity,
+        bookedCount: slot.reserved,
+        isOpen: slot.isOpen ?? true,
+        isBookedByCurrentUser: Boolean(slot.bookedByCurrentUser),
+        now
+      });
+    });
+
+  return { menus, slots, isDemo: true };
+}
+
+function getFriendlyErrorMessage(errorMessage: string) {
+  if (errorMessage.includes('duplicate key') || errorMessage.includes('reservations_reservation_slot_id_member_id_key')) {
+    return 'この枠はすでに予約済みです。画面を更新して最新の状態を確認してください。';
+  }
+
+  if (errorMessage.includes('定員')) {
+    return 'この枠は満席になりました。別の枠をお選びください。';
+  }
+
+  return `予約処理でエラーが発生しました: ${errorMessage}`;
+}
 
 export default function ReservePage() {
   const [selectedMenuId, setSelectedMenuId] = useState(initialMenus[0].id);
+  const [menus, setMenus] = useState<MenuOption[]>(initialMenus.map((menu) => ({ ...menu })));
+  const [slots, setSlots] = useState<ReservationGridSlot[]>([]);
   const [message, setMessage] = useState<string | null>(null);
-  const selectedMenu = initialMenus.find((menu) => menu.id === selectedMenuId) ?? initialMenus[0];
-  const visibleSlots = useMemo(() => sampleSlots.filter((slot) => slot.menuId === selectedMenuId), [selectedMenuId]);
+  const [loading, setLoading] = useState(true);
+  const [submittingSlotId, setSubmittingSlotId] = useState<string | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(!isSupabaseConfigured);
 
-  const handleReserve = async (slotId: string) => {
+  const selectedMenu = useMemo(() => menus.find((menu) => menu.id === selectedMenuId) ?? menus[0], [menus, selectedMenuId]);
+
+  const loadReservationGrid = useCallback(async () => {
     const client = getSupabaseClient();
+
     if (!client) {
-      setMessage('Supabase環境変数を設定してください。現在はデモ表示のため予約は保存されません。');
+      const demoData = buildDemoData(selectedMenuId);
+      setMenus(demoData.menus);
+      setSlots(demoData.slots);
+      setIsDemoMode(true);
+      setLoading(false);
       return;
     }
+
+    setLoading(true);
+    setIsDemoMode(false);
+
+    const { data: userData } = await client.auth.getUser();
+    const currentUserId = userData.user?.id ?? null;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 14);
+
+    const { data: menuRows, error: menuError } = await client
+      .from('menus')
+      .select('id,name,description,default_capacity')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (menuError) {
+      setMessage(`メニューの読み込みに失敗しました: ${menuError.message}`);
+      setLoading(false);
+      return;
+    }
+
+    const nextMenus = (menuRows ?? []).map((menu) => ({
+      id: menu.id,
+      name: menu.name,
+      description: menu.description,
+      capacity: menu.default_capacity
+    }));
+
+    const activeMenuId = nextMenus.some((menu) => menu.id === selectedMenuId) ? selectedMenuId : nextMenus[0]?.id;
+    setMenus(nextMenus);
+    if (activeMenuId && activeMenuId !== selectedMenuId) {
+      setSelectedMenuId(activeMenuId);
+    }
+
+    if (!activeMenuId) {
+      setSlots([]);
+      setLoading(false);
+      return;
+    }
+
+    const { data: slotRows, error: slotError } = await client
+      .from('reservation_slots')
+      .select('id,menu_id,starts_at,ends_at,capacity,is_open')
+      .eq('menu_id', activeMenuId)
+      .gte('starts_at', start.toISOString())
+      .lte('starts_at', end.toISOString())
+      .order('starts_at', { ascending: true });
+
+    if (slotError) {
+      setMessage(`予約枠の読み込みに失敗しました: ${slotError.message}`);
+      setLoading(false);
+      return;
+    }
+
+    const typedSlotRows = (slotRows ?? []) as ReservationSlotRow[];
+    const slotIds = typedSlotRows.map((slot) => slot.id);
+    const countBySlotId = new Map<string, number>();
+    const bookedByCurrentUser = new Set<string>();
+
+    if (slotIds.length > 0) {
+      const { data: countRows, error: countError } = await client.rpc('get_slot_booking_counts', { slot_ids: slotIds });
+
+      if (!countError) {
+        ((countRows ?? []) as ReservationCountRow[]).forEach((row) => {
+          countBySlotId.set(row.reservation_slot_id, Number(row.booked_count));
+        });
+      } else {
+        const { data: reservationRows } = await client
+          .from('reservations')
+          .select('reservation_slot_id,member_id,status')
+          .in('reservation_slot_id', slotIds)
+          .eq('status', 'booked');
+
+        ((reservationRows ?? []) as ReservationRow[]).forEach((reservation) => {
+          countBySlotId.set(reservation.reservation_slot_id, (countBySlotId.get(reservation.reservation_slot_id) ?? 0) + 1);
+        });
+      }
+
+      if (currentUserId) {
+        const { data: ownReservationRows } = await client
+          .from('reservations')
+          .select('reservation_slot_id,member_id,status')
+          .eq('member_id', currentUserId)
+          .in('reservation_slot_id', slotIds)
+          .eq('status', 'booked');
+
+        ((ownReservationRows ?? []) as ReservationRow[]).forEach((reservation) => {
+          bookedByCurrentUser.add(reservation.reservation_slot_id);
+        });
+      }
+    }
+
+    const now = new Date();
+    setSlots(typedSlotRows.map((slot) => toGridSlot({
+      id: slot.id,
+      startsAt: slot.starts_at,
+      capacity: slot.capacity,
+      bookedCount: countBySlotId.get(slot.id) ?? 0,
+      isOpen: slot.is_open,
+      isBookedByCurrentUser: bookedByCurrentUser.has(slot.id),
+      now
+    })));
+    setLoading(false);
+  }, [selectedMenuId]);
+
+  useEffect(() => {
+    void loadReservationGrid();
+  }, [loadReservationGrid]);
+
+  const handleReserve = async (slotId: string) => {
+    if (submittingSlotId) {
+      return;
+    }
+
+    const client = getSupabaseClient();
+    if (!client) {
+      setMessage('現在はデモ・セットアップモードです。Supabase環境変数を設定すると実際に予約できます。');
+      return;
+    }
+
+    setSubmittingSlotId(slotId);
+    setMessage(null);
 
     const { data: userData } = await client.auth.getUser();
     if (!userData.user) {
-      setMessage('ログイン後に予約できます。');
+      setMessage('ログイン後に予約できます。ログインページからメールアドレスでログインしてください。');
+      setSubmittingSlotId(null);
       return;
     }
 
-    const { error } = await client.from('reservations').insert({ reservation_slot_id: slotId, member_id: userData.user.id, status: 'booked' });
-    setMessage(error ? error.message : '予約が完了しました。');
+    const { error } = await client.from('reservations').insert({
+      reservation_slot_id: slotId,
+      member_id: userData.user.id,
+      status: 'booked',
+      created_by: userData.user.id
+    });
+
+    if (error) {
+      setMessage(getFriendlyErrorMessage(error.message));
+      setSubmittingSlotId(null);
+      void loadReservationGrid();
+      return;
+    }
+
+    setMessage('予約が完了しました。予約一覧から内容を確認できます。');
+    setSubmittingSlotId(null);
+    await loadReservationGrid();
   };
 
   return (
@@ -35,38 +308,42 @@ export default function ReservePage() {
         <SupabaseNotice />
         <div>
           <h1 className="text-3xl font-black">予約する</h1>
-          <p className="mt-2 text-gray-600">メニューを選択し、空き枠から予約してください。</p>
+          <p className="mt-2 text-gray-600">日付と時間が交差する枠を選んで予約してください。</p>
         </div>
+        {isDemoMode && (
+          <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-bold text-yellow-900">
+            デモ・セットアップモードで表示しています。Supabase環境変数を設定すると実際の予約枠を読み込みます。
+          </div>
+        )}
         {message && <div className="rounded-2xl bg-yellow-100 p-4 font-bold text-yellow-900">{message}</div>}
         <section className="grid gap-3 md:grid-cols-3">
-          {initialMenus.map((menu) => (
-            <button key={menu.id} onClick={() => setSelectedMenuId(menu.id)} className={`rounded-2xl border p-5 text-left shadow-sm ${selectedMenuId === menu.id ? 'border-yellow-400 bg-yellow-100' : 'border-gray-200 bg-white'}`}>
+          {menus.map((menu) => (
+            <button
+              key={menu.id}
+              type="button"
+              onClick={() => setSelectedMenuId(menu.id)}
+              className={`rounded-2xl border p-5 text-left shadow-sm ${selectedMenuId === menu.id ? 'border-yellow-400 bg-yellow-100' : 'border-gray-200 bg-white'}`}
+            >
               <p className="text-lg font-black">{menu.name}</p>
-              <p className="mt-1 text-sm text-gray-600">定員 {menu.capacity}名</p>
+              <p className="mt-1 text-sm text-gray-600">定員目安 {menu.capacity}名</p>
+              {menu.description && <p className="mt-2 text-xs font-semibold text-gray-500">{menu.description}</p>}
             </button>
           ))}
         </section>
-        <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 className="text-2xl font-black">{selectedMenu.name} の空き枠</h2>
-          <div className="mt-4 grid gap-3">
-            {visibleSlots.map((slot) => {
-              const remaining = selectedMenu.capacity - slot.reserved;
-              return (
-                <div key={slot.id} className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-lg font-black">{slot.date} {slot.time}</p>
-                    <p className="text-sm font-semibold text-gray-600">残席 {Math.max(remaining, 0)} / {selectedMenu.capacity}</p>
-                    {remaining <= 0 && <p className="text-sm font-bold text-red-600">満席です</p>}
-                  </div>
-                  <button disabled={remaining <= 0} onClick={() => handleReserve(slot.id)} className="rounded-full bg-gray-950 px-5 py-2 font-bold text-white disabled:opacity-40">予約する</button>
-                </div>
-              );
-            })}
+        <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-2xl font-black">{selectedMenu?.name ?? '予約枠'} の空き枠</h2>
+              <p className="mt-1 text-sm text-gray-600">横にスクロールすると別日程を確認できます。</p>
+            </div>
+            {loading && <p className="text-sm font-bold text-gray-500">読み込み中です...</p>}
           </div>
+          {!loading && <ReservationGrid slots={slots} submittingSlotId={submittingSlotId} onReserve={handleReserve} />}
+          {loading && <div className="rounded-2xl border border-gray-100 bg-gray-50 p-6 font-bold text-gray-600">予約枠を読み込んでいます。</div>}
         </section>
         <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5">
-          <h2 className="font-black">予約完了表示</h2>
-          <p className="mt-2 text-sm text-gray-700">予約が保存されると「予約が完了しました」と表示し、メール通知ログへ登録する設計です。</p>
+          <h2 className="font-black">表示について</h2>
+          <p className="mt-2 text-sm text-gray-700">「予約する」は受付中、「予約済み」はご自身の予約、「満席」は残席なし、「受付終了」は開始済みの枠です。残席はキャンセル済み予約を除いた予約中の件数から計算します。</p>
         </section>
       </div>
     </AppShell>
