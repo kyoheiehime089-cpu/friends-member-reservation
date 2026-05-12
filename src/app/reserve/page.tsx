@@ -154,6 +154,7 @@ export default function ReservePage() {
 
     setLoading(true);
     setIsDemoMode(false);
+    setMessage(null);
 
     const { data: userData } = await client.auth.getUser();
     const currentUserId = userData.user?.id ?? null;
@@ -215,21 +216,16 @@ export default function ReservePage() {
     if (slotIds.length > 0) {
       const { data: countRows, error: countError } = await client.rpc('get_slot_booking_counts', { slot_ids: slotIds });
 
-      if (!countError) {
-        ((countRows ?? []) as ReservationCountRow[]).forEach((row) => {
-          countBySlotId.set(row.reservation_slot_id, Number(row.booked_count));
-        });
-      } else {
-        const { data: reservationRows } = await client
-          .from('reservations')
-          .select('reservation_slot_id,member_id,status')
-          .in('reservation_slot_id', slotIds)
-          .eq('status', 'booked');
-
-        ((reservationRows ?? []) as ReservationRow[]).forEach((reservation) => {
-          countBySlotId.set(reservation.reservation_slot_id, (countBySlotId.get(reservation.reservation_slot_id) ?? 0) + 1);
-        });
+      if (countError) {
+        setMessage('予約数集計のSupabase設定が未適用です。管理者にお問い合わせください。');
+        setSlots([]);
+        setLoading(false);
+        return;
       }
+
+      ((countRows ?? []) as ReservationCountRow[]).forEach((row) => {
+        countBySlotId.set(row.reservation_slot_id, Number(row.booked_count));
+      });
 
       if (currentUserId) {
         const { data: ownReservationRows } = await client
