@@ -1,42 +1,12 @@
-"use client";
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-import { useRouter } from 'next/navigation';
+import { AdminPage } from '@/components/AdminPage';
+import { initialMenus } from '@/lib/initialData';
 
 export default function AdminMenusPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    const checkAdmin = async () => {
-      const {
-        data: { session }
-      } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/login');
-        return;
-      }
-      const { data: admin } = await supabase
-        .from('admin_profiles')
-        .select('id')
-        .eq('id', session.user.id)
-        .maybeSingle();
-      setIsAdmin(!!admin);
-      setLoading(false);
-    };
-    checkAdmin();
-  }, [router]);
-
-  if (loading) return null;
-  if (!isAdmin) {
-    return <p className="p-4">管理者権限がありません。</p>;
-  }
   return (
-    <div className="p-4">
-      <h1 className="text-2xl font-bold mb-4">メニュー管理</h1>
-      <p>このページではメニューの一覧表示、追加、編集、並び替え、停止ができます。</p>
-      {/* TODO: implement menu management */}
-    </div>
+    <AdminPage title="メニュー管理" description="メニューの一覧表示、追加、編集、停止を行います。">
+      <div className="grid gap-4 md:grid-cols-3">
+        {initialMenus.map((menu) => <div key={menu.id} className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm"><h2 className="text-xl font-black">{menu.name}</h2><p className="mt-2 text-sm text-gray-600">{menu.description}</p><p className="mt-4 font-bold">初期定員: {menu.capacity}名</p><button className="mt-4 rounded-full border px-4 py-2 font-bold">編集</button></div>)}
+      </div>
+    </AdminPage>
   );
 }

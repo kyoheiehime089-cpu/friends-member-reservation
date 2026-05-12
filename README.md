@@ -1,218 +1,192 @@
 # friends-member-reservation
 
-このリポジトリは、セミパーソナルジム **friends** と **blossom yoga** の会員向け予約管理システムの第1版です。Supabase と Next.js (React/TypeScript) を利用し、スマホ優先で使いやすい会員予約画面と管理者画面を提供します。将来的に食事管理AI・決済連携・LINE通知・キャンセル待ち等の機能を追加できるよう、予約機能とその他機能を分離した設計になっています。
+friends 行徳 / blossom yoga 専用の会員予約管理システムです。Next.js、TypeScript、Tailwind CSS、Supabase を使い、会員予約・予約確認・管理者運用を第1版としてローンチ直前まで進めるための構成にしています。
 
-## 特長
+## 1. アプリ概要
 
-- **Supabase Auth/Database/RLS** による安全なユーザー管理と予約データ管理。
-- **Next.js + Tailwind CSS** でスマホでもPCでも見やすいUI。
-- 管理画面からメニュー、プラン、スケジュール、予約ルール、通知設定、権限を柔軟に変更できます。
-- Row Level Security を前提としたテーブル設計で、会員は自分のデータのみ閲覧・更新可能、管理者は権限に応じてアクセスを制限できます。
-- 予約に必要なデータのみを読み込む設計とし、将来追加する機能は別API・別テーブル・別画面で実装できるようにしました。
+- 会員向け: トップ、ログイン、予約、メニュー選択、空き枠表示、予約完了表示、自分の予約一覧、キャンセル案内。
+- 管理者向け: 管理者ダッシュボード、今日の予約、予約一覧、会員一覧、予約枠管理、メニュー管理、プラン管理、基本設定、管理者予約追加、管理者キャンセル処理の導線。
+- Supabase未設定時も `createClient('', '')` を呼ばず、画面に「Supabase環境変数を設定してください」と表示してVercelビルドを通します。
+- Supabase設定後は `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` で実データへ接続します。service_role key はクライアントに出しません。
 
-## ディレクトリ構成
-
-```
-friends-member-reservation/
-├── .env.example         # 環境変数のサンプルファイル (機密情報は記載しない)
-├── README.md            # このファイル
-├── package.json         # npm パッケージ定義
-├── tsconfig.json        # TypeScript 設定
-├── next.config.js       # Next.js 設定
-├── postcss.config.js    # PostCSS 設定
-├── tailwind.config.js   # Tailwind 設定
-├── supabase/
-│   └── schema.sql       # テーブル定義 & RLS ポリシー & 関数定義
-└── src/
-    ├── app/
-    │   ├── layout.tsx    # 全ページ共通レイアウト
-    │   ├── page.tsx      # トップページ
-    │   ├── login/
-    │   │   └── page.tsx  # ログイン画面
-    │   ├── reserve/
-    │   │   └── page.tsx  # 会員予約画面
-    │   └── admin/
-    │       ├── page.tsx          # 管理者トップ
-    │       ├── reservations/
-    │       │   └── page.tsx      # 予約一覧
-    │       ├── members/
-    │       │   └── page.tsx      # 会員管理
-    │       ├── menus/
-    │       │   └── page.tsx      # メニュー管理
-    │       ├── plans/
-    │       │   └── page.tsx      # プラン管理
-    │       ├── schedules/
-    │       │   └── page.tsx      # スケジュール管理
-    │       └── settings/
-    │           └── page.tsx      # 設定管理
-    ├── lib/
-    │   └── supabaseClient.ts     # Supabase クライアント
-    └── app/globals.css           # Tailwind ベーススタイル
-```
-
-## 環境構築
-
-以下の手順でローカル環境を構築できます。まずは `.env.example` をコピーして `.env.local` を作成し、必要なキーを記入してください。
+## 2. ローカル起動方法
 
 ```bash
-cp .env.example .env.local
-# .env.local を編集し、NEXT_PUBLIC_SUPABASE_URL、NEXT_PUBLIC_SUPABASE_ANON_KEY、SUPABASE_SERVICE_ROLE_KEY 等を設定する
-```
-
-### Supabase プロジェクトの作成
-
-1. [Supabase](https://supabase.com/) へログインし、新規プロジェクトを作成します。
-2. プロジェクトの「Project API」画面から「URL」と「anon 公開鍵 (anon key)」を取得し、`.env.local` の `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` に記入します。
-3. 「Service role key」はバックエンドでのみ使用します。ブラウザに出さないよう注意し、`.env.local` の `SUPABASE_SERVICE_ROLE_KEY` に記入します。
-4. Supabase SQL エディタで `supabase/schema.sql` の内容を実行し、テーブル・RLS・関数を作成します。
-   - Supabase ではテーブル作成後に Row Level Security を有効にする必要がありますが、本リポジトリの SQL では `enable row level security` とポリシー定義まで含めています。
-   - RLS の概要については Supabase ドキュメントを参照してください【685832429582761†L185-L194】。
-
-### Vercel へのデプロイ
-
-1. GitHub に **friends-member-reservation** リポジトリを作成し、このプロジェクトの内容を push してください (既存の `reservation-app` リポジトリは触らないでください)。
-2. Vercel アカウントを作成し、GitHub リポジトリと連携します。
-3. Vercel のプロジェクト設定で環境変数を設定します。
-   - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY` (サーバーサイドのみ)
-   - `EMAIL_API_KEY` (メール送信用。例: SendGrid の API キー)
-   - `EMAIL_FROM_SEMIPERSONAL_NAME`, `EMAIL_FROM_YOGA_NAME`, `EMAIL_FROM_ADDRESS`
-   - `RESERVATION_START_DATE` (新システムの予約受付開始日)
-4. Preview 環境が自動で作成されるので、URL にアクセスし動作確認します。
-5. 問題なければ main へマージし、本番環境に反映します。main へ直接 push しないよう、必ず Pull Request (PR) 経由で反映してください。
-
-### ローカル開発
-
-```bash
-# 依存パッケージのインストール
 npm install
-
-# 開発サーバー起動
+cp .env.example .env.local
 npm run dev
-
-# 型チェック
-npm run build
-
-# ESLint 実行
-npm run lint
 ```
 
-## 初期オーナーアカウントの作成
+Supabase接続前でも主要画面はデモデータで表示できます。実データで確認する場合のみ `.env.local` に以下を設定してください。
 
-Supabase Auth に直接オーナーアカウントを登録することで管理者画面へアクセスできます。以下は管理者アカウントを作成する一例です。
+```bash
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+MAIL_API_KEY=
+MAIL_FROM_FRIENDS=
+MAIL_FROM_YOGA=
+ADMIN_NOTIFICATION_EMAIL=
+```
 
-1. Supabase プロジェクトの認証 > ユーザー管理から新規ユーザーを追加します。メールアドレスは `kyohei.ehime089@gmail.com`、任意のパスワードを設定します。
-2. `admin_profiles` テーブルにユーザーID・名前・メール・電話番号・`role = 'owner'` を挿入します。これは SQL エディタで以下のように実行できます。
+## 3. Supabaseプロジェクト作成方法
+
+1. Supabaseで新規プロジェクトを作成します。
+2. Project Settings > API で Project URL と anon public key を確認します。
+3. URLを `NEXT_PUBLIC_SUPABASE_URL`、anon public key を `NEXT_PUBLIC_SUPABASE_ANON_KEY` に設定します。
+4. service_role key はブラウザへ出さず、必要になった時だけサーバー専用環境変数として扱ってください。
+
+## 4. Supabase SQL実行方法
+
+1. Supabase SQL Editor を開きます。
+2. `supabase/schema.sql` の全文を貼り付けて実行します。
+3. `stores`、`menus`、`plans`、`members`、`admin_users`、`reservation_slots`、`reservations`、`reservation_rules`、`notification_settings`、`audit_logs`、`settings_change_logs`、`mail_logs` が作成されます。
+4. RLSは有効化済みです。会員は自分の会員情報と予約のみ閲覧し、管理者は管理テーブルを扱えます。
+5. 予約定員超過は `reservations_capacity_guard` トリガーで防止します。
+
+## 5. Vercel環境変数設定方法
+
+Vercel Project Settings > Environment Variables に以下を設定します。値はGitHubやPR本文に書かないでください。
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `MAIL_API_KEY`
+- `MAIL_FROM_FRIENDS`
+- `MAIL_FROM_YOGA`
+- `ADMIN_NOTIFICATION_EMAIL`
+
+Supabase変数が未設定でもビルドは成功しますが、予約保存・ログインはできません。
+
+## 6. Vercel公開方法
+
+1. 作業ブランチをGitHubへpushします。
+2. Pull Requestを作成します。
+3. Vercel Preview Deployment のURLで主要画面を確認します。
+4. 問題なければPRをレビュー後にmainへマージします。mainへ直接コミットしないでください。
+5. Production Deployment が成功したら公開URLを会員へ案内します。
+
+## 7. 初期オーナー作成手順
+
+1. Supabase Authentication > Users で `kyohei.ehime089@gmail.com` のユーザーを作成します。
+2. 作成されたユーザーUUIDを控えます。
+3. SQL Editor で次を実行します。
 
 ```sql
-insert into admin_profiles (id, name, email, phone, role) values
-  ('<Supabase Auth のユーザーID>', '初期オーナー', 'kyohei.ehime089@gmail.com', '', 'owner');
+insert into public.admin_users (id, email, role)
+values ('AUTH_USER_UUID', 'kyohei.ehime089@gmail.com', 'owner')
+on conflict (id) do update set role = excluded.role;
 ```
 
-これで該当ユーザーが管理者画面へログインすると、他の管理者権限の追加・変更が可能になります。
+## 8. 会員登録手順
 
-## 会員登録手順
+1. Supabase Authenticationで会員ユーザーを作成します。
+2. `members` テーブルへ Auth user UUID、氏名、メール、プラン、ステータスを登録します。
+3. 初期ステータスは `有効`、`休会中`、`退会予定`、`退会済み`、`停止中`、`未払い` から選択します。
 
-1. 管理者画面の「会員管理」から新規会員を登録します。名前・メールアドレス・電話番号・所属店舗・プラン・ステータスを入力します。
-2. 登録後、Supabase Auth へユーザーが自動登録されます (サービスロールキーを用いたバックエンド処理が必要)。
-3. 管理者画面から会員へログインID(メールアドレス)と仮パスワードを個別または一括で送信できます。メール送信には `.env.local` に設定した `EMAIL_API_KEY` 等を利用します。
-4. 会員は初回ログイン時にパスワード変更を求められます。
+## 9. ログインID・仮パスワード送信手順
 
-## 会員予約画面の使い方
+第1版では実メール送信は未接続です。管理者がSupabaseで仮パスワードを発行し、メールAPI接続後に送信してください。
 
-1. 会員は `/login` にアクセスしメールアドレスとパスワードでログインします。
-2. ログイン後トップページに戻ると「予約画面へ進む」ボタンが表示されます。
-3. 「予約する」ではまずメニューを選択し、次に空き枠の一覧から希望日時を選びます。
-4. 定員が満席の場合は「満席」と表示され予約できません。同時予約数、週回数制限、同日複数予約の可否などのルールはプラン設定に応じてブロックされます。
-5. 予約確定後は「予約が完了しました」と表示され、「自分の予約一覧」で確認できます。
-6. キャンセル期限前であれば会員側からキャンセル可能です。期限を過ぎた場合は「管理者へご連絡ください」と表示します。
+1. 会員のメールアドレスをログインIDにします。
+2. 仮パスワードを発行します。
+3. メールAPI設定後、送信関数からログインIDと仮パスワードを送ります。
+4. 送信結果は `mail_logs` へ保存する設計です。
 
-## 管理者画面の使い方
+## 10. 会員予約画面の使い方
 
-- `/admin` にアクセスすると管理者ダッシュボードが表示されます。オーナー/管理者のみアクセスできます。
-- 予約一覧: 全会員の予約を日別・メニュー別などで閲覧し、キャンセルや満席確認ができます。
-- 会員管理: 会員の新規登録、情報編集、ステータス変更、代理ログイン、ログイン情報メール送信などが可能です。
-- メニュー管理: メニューの追加・削除・停止・並び替え、定員設定ができます。
-- プラン管理: プランの追加・編集・停止や週回数制限、同時予約数、予約期間、キャンセル期限、メール通知の初期値などを設定できます。
-- スケジュール管理: 各店舗・メニューごとの時間枠を作成・編集・休業日設定・曜日ごとの一括変更・特定日の変更が行えます。
-- 設定管理: 店舗追加、予約ルール、メール通知、管理者権限、予約受付開始日などシステム全体の設定を変更できます。設定変更時はいつから適用するか選択でき、過去の予約へ影響しないようにします。
-- 操作履歴と設定変更履歴は管理画面から閲覧でき、誰がいつ何を変更したか確認できます。
+1. `/login` からログインします。
+2. `/reserve` でメニューを選択します。
+3. 空き枠の残席を確認して「予約する」を押します。
+4. 完了メッセージが表示されます。
+5. `/my-reservations` で予約を確認できます。
+6. キャンセル期限後は「管理者へご連絡ください」と表示します。
 
-## メール通知
+## 11. 管理者画面の使い方
 
-第1版から会員および管理者へのメール通知に対応しています。メール配信は低コストな外部サービス (例: [SendGrid](https://sendgrid.com/)) を利用することを想定しており、`EMAIL_API_KEY` に API キーを設定してください。メニューやプランによって差出人名を切り替える設計になっており、`EMAIL_FROM_SEMIPERSONAL_NAME` と `EMAIL_FROM_YOGA_NAME` で指定します。将来的には管理画面から差出人名を変更できるよう拡張してください。
+- `/admin`: 今日の予約、管理者予約追加、キャンセル処理、基本設定への導線。
+- `/admin/reservations`: 予約一覧、検索、管理者による予約追加、キャンセル処理。
+- `/admin/members`: 会員一覧、登録、プラン変更、ステータス管理。
+- `/admin/menus`: セミパーソナル、ヨガ、イベントの管理。
+- `/admin/plans`: 週1、週2、通い放題、その他プランの管理。
+- `/admin/schedules`: 平日・土日祝の予約枠、木曜定休、一括設定。
+- `/admin/settings`: 予約受付開始日、同時予約数、キャンセル期限、通知設定。
 
-送信するメールの種類:
+## 12. メール通知設定方法
 
-- 会員への予約完了メール
-- 管理者への予約通知メール
-- 会員へのキャンセル完了メール
-- 管理者へのキャンセル通知メール
-- 会員へのログインID・仮パスワード送信メール
-- 仮パスワード再発行メール
-- 管理者から会員への個別メール
-- 管理者から会員への一斉メール (全会員・店舗別・プラン別・メニュー別・ステータス別)
+`.env.local` と Vercel に以下を設定します。
 
-メール送信機能は `supabase.functions` または外部サーバーで実装し、このリポジトリには含めていません。`.env.example` に変数名のみ用意しているので、実際の API キーはコミットしないでください。
+- `MAIL_API_KEY`: SendGrid / Resend などのAPIキー。
+- `MAIL_FROM_FRIENDS`: friends用送信元。
+- `MAIL_FROM_YOGA`: blossom yoga用送信元。
+- `ADMIN_NOTIFICATION_EMAIL`: 管理者通知先。
 
-## バックアップとデータ保護
+`src/lib/mail.ts` は雛形です。実API接続を追加するまで実メールは送信されません。APIキーはGitHubへコミットしないでください。
 
-- テーブルは全て Row Level Security を有効化し、認証済みユーザーのみアクセスできます。RLS を通じて会員は自分のデータにのみアクセスし、管理者は許可された範囲で操作します。
-- Supabase の service role key はブラウザに送らないよう `.env.local` や Vercel の環境変数で管理し、バックエンド (API route や Edge Function) からのみ使用してください。
-- Supabase の [バックアップ機能](https://supabase.com/docs/guides/platform/database/backups) を使って定期的にデータをバックアップし、重大な設定変更前にはデータをエクスポートしてください。`pg_dump` を用いてローカルにバックアップすることも可能です。
+## 13. ローンチ前チェックリスト
 
-## ローンチ前チェックリスト
+- [ ] Vercel Previewで `/`、`/login`、`/reserve`、`/my-reservations`、`/admin`、`/admin/reservations`、`/admin/members`、`/admin/menus`、`/admin/plans`、`/admin/schedules` が表示される。
+- [ ] Supabase SQLを実行済み。
+- [ ] 初期オーナーを `admin_users` に登録済み。
+- [ ] 会員データを登録済み。
+- [ ] 予約枠を本番日程で作成済み。
+- [ ] Vercel環境変数を設定済み。
+- [ ] `npm run build` と `npm run lint` が成功済み。
+- [ ] 実予約・キャンセル・期限後キャンセル案内を確認済み。
+- [ ] メール送信文面と送信元を確認済み。
 
-新システムを本番公開する前に、以下の項目を確認してください。
+## 14. 会員への案内文テンプレート
 
-### 基本設定
+> 〇月〇日以降のご予約については、新しい会員予約システムからお願いいたします。  
+> ログインIDと仮パスワードをメールでお送りしますので、初回ログイン後にご予約をお願いいたします。  
+> 〇月〇日以前のご予約については、これまで通りの方法で確認をお願いいたします。
 
-- [ ] Supabase プロジェクトを作成し、`schema.sql` を実行したか
-- [ ] RLS 設定を有効化しポリシーを確認したか
-- [ ] `.env.local` や Vercel に必要な環境変数を設定したか
-- [ ] Vercel と GitHub を連携し Preview 環境で動作確認したか
+## 15. 本番反映手順
 
-### 初期データ
+1. PR上でVercel Previewを確認します。
+2. Supabase本番プロジェクトのSQL・初期データ・RLSを確認します。
+3. Vercel Production環境変数を設定します。
+4. PRをレビューし、問題なければmainへマージします。
+5. Production URLで主要画面と予約操作を確認します。
 
-- [ ] 初期オーナーを作成したか
-- [ ] 店舗設定を確認したか (friends 行徳が登録されているか)
-- [ ] メニュー設定を確認したか (セミパーソナル/ヨガ/イベントと定員)
-- [ ] プラン設定を確認したか (週回数や同時予約数など)
-- [ ] スケジュール設定を確認したか (平日・土日祝の時間枠、木曜日は休業日)
-- [ ] 予約受付開始日 (`RESERVATION_START_DATE`) を設定したか
+## 16. トラブルシューティング
 
-### テスト
+### `supabaseUrl is required`
 
-- [ ] テスト会員を作成しログインメール送信を試したか
-- [ ] 会員がログインし予約画面が表示されるか
-- [ ] 予約登録・表示・キャンセルが正常に動作するか
-- [ ] 管理者画面から手動予約追加・削除ができるか
-- [ ] メール通知が送信されるか
-- [ ] 代理ログインが機能するか (操作履歴に残るか)
-- [ ] 権限設定に応じて各機能へのアクセスが制限されているか
-- [ ] スマホでの表示、PC 管理画面の表示が問題ないか
-- [ ] Preview 環境と本番環境のデータが分離されているか
-- [ ] バックアップ手順を確認したか
-- [ ] 旧予約方法から新予約方法への案内準備をしたか
+`NEXT_PUBLIC_SUPABASE_URL` が未設定の状態で `createClient('', '')` を呼ぶと発生します。本アプリでは `src/lib/supabaseClient.ts` で未設定時に `null` を返し、主要画面は案内UIを表示します。
 
-## 会員への案内文テンプレート
+### ログインできない
 
-以下は、旧予約システムから新システムへ移行する際に会員へ送る案内文の例です。
+- Vercel / `.env.local` の `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` を確認してください。
+- Supabase Authにユーザーが存在するか確認してください。
+- 管理者は `admin_users` に登録されているか確認してください。
 
-> **件名**: 新しい会員予約システムのご案内
->
-> いつもご利用いただきありがとうございます。〇月〇日以降のご予約については、新しい会員予約システムからお願いいたします。ログインIDと仮パスワードをメールでお送りしますので、初回ログイン後にパスワードの変更とご予約をお願いいたします。〇月〇日以前のご予約については、これまで通りの方法で確認をお願いいたします。
+### 予約できない
 
-## 将来追加予定機能メモ
+- `reservation_slots` に対象枠があるか確認してください。
+- `members` に会員データがあるか確認してください。
+- 定員超過、週回数制限、同日複数予約不可、同時予約数制限に該当しないか確認してください。
 
-- 食事管理AIとの連携 (別画面・別テーブル)
-- 決済システム連携 (月会費・チケット購入等)
-- LINE 通知やプッシュ通知
-- キャンセル待ち機能 (繰り上がり時の自動通知)
-- イベント回数消化の細かい設定
+### メールが送れない
 
-これら機能は予約画面と分離した構成で追加可能です。例えば決済連携はプランの支払い状態を管理するテーブルを追加し、支払い状況に応じて予約可否を判断します。LINE 通知は Webhook を経由した別サービスとして実装し、重くならないよう非同期で処理します。
+- `MAIL_API_KEY` がVercelに設定されているか確認してください。
+- `src/lib/mail.ts` に利用するメールAPIの実装を追加してください。
+- `mail_logs` に送信結果が残っているか確認してください。
 
-## 免責事項
+## 初期データ
 
-このリポジトリは第1版の参考実装です。運用にあたっては、メール送信処理や Supabase 関数の実装、UI/UX のブラッシュアップ、パフォーマンスチューニングなどが必要になる場合があります。実装内容やテーブル定義は自由に変更し、ご自身の環境に合わせて最適化してください。
+- 店舗: friends 行徳
+- メニュー: セミパーソナル（5名）、ヨガ（7名）、イベント（8名）
+- 平日: 18:30 / 19:20 / 20:10 / 21:00
+- 土日祝: 10:00 / 10:50 / 11:40 / 12:30
+- 木曜定休
+- プラン: セミパーソナル週1、セミパーソナル週2、ヨガ週1、ヨガ週2、ヨガ通い放題、その他
+
+## 予約ルール
+
+- 週カウントは月曜〜日曜。
+- 週1プランは週1回まで、週2プランは週2回まで。
+- 通い放題は週回数制限なし。
+- 同時予約数は初期値2枠まで。
+- 同日複数予約は初期設定では不可。
+- 予約可能期間は初期値14日先まで。
+- キャンセル期限は前日22時まで。
+- 予約受付開始日前の枠は予約不可。
