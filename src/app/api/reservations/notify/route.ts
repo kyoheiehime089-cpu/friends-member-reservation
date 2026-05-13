@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendMail } from '@/lib/mail';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? '';
-const gridTimeZone = 'Asia/Tokyo';
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
+const gridTimeZone = 'Asia/Tokyo';
 const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
   year: 'numeric',
   month: 'numeric',
@@ -28,7 +28,6 @@ type ReservationRow = {
   id: string;
   reservation_slot_id: string;
   member_id: string;
-  status: string;
 };
 
 type SlotRow = {
@@ -49,6 +48,14 @@ type MemberRow = {
   email: string | null;
 };
 
+type MailLogRow = {
+  reservation_id: string;
+  to_email: string;
+  subject: string;
+  status: string;
+  provider_response: unknown;
+};
+
 function buildReservationMail(params: {
   memberName: string;
   menuName: string;
@@ -65,6 +72,9 @@ function buildReservationMail(params: {
 }
 
 export async function POST(request: Request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+
   if (!supabaseUrl || !supabaseAnonKey) {
     return NextResponse.json({ ok: false, message: 'Supabase環境変数が未設定です。' }, { status: 500 });
   }
@@ -75,8 +85,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: 'ログイン情報が確認できません。' }, { status: 401 });
   }
 
-  const body = await request.json().catch(() => ({})) as NotifyRequestBody;
-  if (!body.reservationId) {
+  const requestBody = await request.json().catch(() => ({})) as NotifyRequestBody;
+  if (!requestBody.reservationId) {
     return NextResponse.json({ ok: false, message: 'reservationId がありません。' }, { status: 400 });
   }
 
@@ -95,8 +105,8 @@ export async function POST(request: Request) {
 
   const { data: reservationData, error: reservationError } = await client
     .from('reservations')
-    .select('id,reservation_slot_id,member_id,status')
-    .eq('id', body.reservationId)
+    .select('id,reservation_slot_id,member_id')
+    .eq('id', requestBody.reservationId)
     .eq('member_id', userData.user.id)
     .single();
 
@@ -105,14 +115,12 @@ export async function POST(request: Request) {
   }
 
   const reservation = reservationData as ReservationRow;
-
-  const [{ data: slotData }, { data: memberData }] = await Promise.all([
-    client.from('reservation_slots').select('id,menu_id,starts_at,ends_at').eq('id', reservation.reservation_slot_id).single(),
-    client.from('members').select('id,full_name,email').eq('id', reservation.member_id).single()
-  ]);
-
+  const { data: slotData } = await client
+    .from('reservation_slots')
+    .select('id,menu_id,starts_at,ends_at')
+    .eq('id', reservation.reservation_slot_id)
+    .single();
   const slot = slotData as SlotRow | null;
-  const member = memberData as MemberRow | null;
 
   let menuName = '予約枠';
   if (slot?.menu_id) {
@@ -120,52 +128,72 @@ export async function POST(request: Request) {
     menuName = (menuData as MenuRow | null)?.name ?? menuName;
   }
 
+  const { data: memberData } = await client
+    .from('members')
+    .select('id,full_name,email')
+    .eq('id', reservation.member_id)
+    .single();
+  const member = memberData as MemberRow | null;
+
   const memberName = member?.full_name ?? userData.user.email ?? '会員';
   const memberEmail = member?.email ?? userData.user.email;
   const subject = 'friends ご予約完了のお知らせ';
-  const bodyText = buildReservationMail({
+  const mailBody = buildReservationMail({
     memberName,
     menuName,
     startsAt: slot?.starts_at,
     endsAt: slot?.ends_at
   });
 
-  const mailResults = [];
+  const mailLogs: MailLogRow[] = [];
+  let memberMailStatus = 'not_configured';
+  let adminMailStatus = 'not_configured';
+
   if (memberEmail) {
-    mailResults.push(await sendMail({
+    const result = await sendMail({
       to: memberEmail,
       subject,
-      body: bodyText,
+      body: mailBody,
       from: process.env.MAIL_FROM_FRIENDS
-    }));
+    });
+    memberMailStatus = result.ok ? 'sent' : result.skipped ? 'skipped' : 'failed';
+    mailLogs.push({
+      reservation_id: reservation.id,
+      to_email: result.payload.to,
+      subject: result.payload.subject,
+      status: memberMailStatus,
+      provider_response: result
+    });
   }
 
-  if (process.env.ADMIN_NOTIFICATION_EMAIL) {
-    mailResults.push(await sendMail({
-      to: process.env.ADMIN_NOTIFICATION_EMAIL,
+  const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL?.trim();
+  if (adminEmail) {
+    const result = await sendMail({
+      to: adminEmail,
       subject: `【管理者通知】${subject}`,
-      body: `${bodyText}\n\n会員ID: ${reservation.member_id}\n予約ID: ${reservation.id}`,
+      body: `${mailBody}\n\n会員ID: ${reservation.member_id}\n予約ID: ${reservation.id}`,
       from: process.env.MAIL_FROM_FRIENDS
-    }));
+    });
+    adminMailStatus = result.ok ? 'sent' : result.skipped ? 'skipped' : 'failed';
+    mailLogs.push({
+      reservation_id: reservation.id,
+      to_email: result.payload.to,
+      subject: result.payload.subject,
+      status: adminMailStatus,
+      provider_response: result
+    });
   }
 
-  const logRows = mailResults.map((result) => ({
-    reservation_id: reservation.id,
-    to_email: result.payload.to,
-    subject: result.payload.subject,
-    status: result.ok ? 'sent' : result.skipped ? 'skipped' : 'failed',
-    provider_response: result
-  }));
-
-  if (logRows.length > 0) {
-    await client.from('mail_logs').insert(logRows);
+  if (mailLogs.length > 0) {
+    await client.from('mail_logs').insert(mailLogs);
   }
 
   return NextResponse.json({
-    ok: mailResults.every((result) => result.ok),
-    skipped: mailResults.some((result) => result.skipped),
-    message: mailResults.some((result) => result.skipped)
-      ? '予約は完了しています。メール送信はAPIキー設定待ちです。'
-      : '予約完了メールを処理しました。'
+    ok: true,
+    memberMail: memberMailStatus,
+    adminMail: adminMailStatus,
+    message: memberMailStatus === 'sent' || adminMailStatus === 'sent'
+      ? '予約完了メールを処理しました。'
+      : '予約は完了しています。メール送信はAPIキー設定待ち、または設定確認待ちです。'
   });
 }
