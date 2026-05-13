@@ -14,20 +14,30 @@ export type ReservationGridSlot = {
   isBookedByCurrentUser: boolean;
 };
 
+export type ReservationGridDate = {
+  dateKey: string;
+  dateLabel: string;
+  weekdayLabel: string;
+};
+
 type ReservationGridProps = {
   slots: ReservationGridSlot[];
   submittingSlotId: string | null;
   onReserve: (slotId: string) => void;
+  dates?: ReservationGridDate[];
+  timeLabels?: string[];
 };
 
-export function ReservationGrid({ slots, submittingSlotId, onReserve }: ReservationGridProps) {
-  const dates = Array.from(new Map(slots.map((slot) => [slot.dateKey, slot])).values())
+export function ReservationGrid({ slots, submittingSlotId, onReserve, dates: providedDates, timeLabels }: ReservationGridProps) {
+  const dates = (providedDates && providedDates.length > 0
+    ? providedDates
+    : Array.from(new Map(slots.map((slot) => [slot.dateKey, slot])).values()))
     .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
-  const times = Array.from(new Set(slots.map((slot) => slot.timeLabel)))
+  const times = (timeLabels && timeLabels.length > 0 ? timeLabels : Array.from(new Set(slots.map((slot) => slot.timeLabel))))
     .sort((a, b) => a.localeCompare(b));
   const slotMap = new Map(slots.map((slot) => [`${slot.dateKey}-${slot.timeLabel}`, slot]));
 
-  if (slots.length === 0) {
+  if (dates.length === 0 || times.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center font-bold text-gray-600">
         表示できる予約枠がありません。
@@ -37,10 +47,10 @@ export function ReservationGrid({ slots, submittingSlotId, onReserve }: Reservat
 
   return (
     <div className="overflow-x-auto pb-2">
-      <div className="min-w-max rounded-3xl border border-gray-200 bg-white p-3 shadow-sm">
+      <div className="min-w-max rounded-3xl border border-gray-200 bg-white p-2 shadow-sm sm:p-3">
         <div
           className="grid gap-2"
-          style={{ gridTemplateColumns: `88px repeat(${dates.length}, minmax(132px, 1fr))` }}
+          style={{ gridTemplateColumns: `80px repeat(${dates.length}, minmax(124px, 1fr))` }}
         >
           <div className="sticky left-0 z-20 rounded-2xl bg-white p-3 text-center text-sm font-black text-gray-500 shadow-sm">
             時間

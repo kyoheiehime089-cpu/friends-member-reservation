@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
-import { ReservationGrid, type ReservationGridSlot } from '@/components/ReservationGrid';
+import { ReservationGrid, type ReservationGridDate, type ReservationGridSlot } from '@/components/ReservationGrid';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
 import { initialMenus, sampleSlots } from '@/lib/initialData';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabaseClient';
@@ -40,7 +40,10 @@ type LoadResult = {
   isDemo: boolean;
 };
 
+type DisplayMode = 'threeDays' | 'week';
+
 const gridTimeZone = 'Asia/Tokyo';
+const standardTimeLabels = ['10:00', '10:50', '11:40', '12:30', '18:30', '19:20', '20:10', '21:00'];
 const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
   month: 'numeric',
   day: 'numeric',
@@ -62,6 +65,32 @@ const timeFormatter = new Intl.DateTimeFormat('ja-JP', {
   hour12: false,
   timeZone: gridTimeZone
 });
+
+function startOfToday() {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addDays(date: Date, days: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function toGridDate(date: Date): ReservationGridDate {
+  return {
+    dateKey: dateKeyFormatter.format(date),
+    dateLabel: dateFormatter.format(date),
+    weekdayLabel: weekdayFormatter.format(date)
+  };
+}
+
+function buildDateRange(rangeStartOffset: number, displayMode: DisplayMode) {
+  const length = displayMode === 'threeDays' ? 3 : 7;
+  const start = addDays(startOfToday(), rangeStartOffset);
+  return Array.from({ length }, (_, index) => toGridDate(addDays(start, index)));
+}
 
 function toGridSlot(params: {
   id: string;
@@ -91,7 +120,8 @@ function toGridSlot(params: {
   };
 }
 
-function buildDemoData(selectedMenuId: string): LoadResult {
+function buildDemoData(selectedMenuId: string, visibleDates: ReservationGridDate[]): LoadResult {
+  const visibleDateKeys = new Set(visibleDates.map((date) => date.dateKey));
   const menus = initialMenus.map((menu) => ({
     id: menu.id,
     name: menu.name,
@@ -100,7 +130,7 @@ function buildDemoData(selectedMenuId: string): LoadResult {
   }));
   const now = new Date();
   const slots = sampleSlots
-    .filter((slot) => slot.menuId === selectedMenuId)
+    .filter((slot) => slot.menuId === selectedMenuId && visibleDateKeys.has(slot.date))
     .map((slot) => {
       const menu = menus.find((item) => item.id === slot.menuId) ?? menus[0];
       return toGridSlot({
@@ -126,6 +156,10 @@ function getFriendlyErrorMessage(errorMessage: string) {
     return 'この枠は満席になりました。別の枠をお選びください。';
   }
 
+  if (errorMessage.includes('row-level security')) {
+    return '予約できませんでした。会員情報またはログイン状態を確認してください。';
+  }
+
   return `予約処理でエラーが発生しました: ${errorMessage}`;
 }
 
@@ -137,14 +171,25 @@ export default function ReservePage() {
   const [loading, setLoading] = useState(true);
   const [submittingSlotId, setSubmittingSlotId] = useState<string | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(!isSupabaseConfigured);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>('threeDays');
+  const [rangeStartOffset, setRangeStartOffset] = useState(0);
 
+  const visibleDates = useMemo(() => buildDateRange(rangeStartOffset, displayMode), [rangeStartOffset, displayMode]);
   const selectedMenu = useMemo(() => menus.find((menu) => menu.id === selectedMenuId) ?? menus[0], [menus, selectedMenuId]);
+  const visibleRangeLabel = useMemo(() => {
+    const firstDate = visibleDates[0];
+    const lastDate = visibleDates[visibleDates.length - 1];
+    if (!firstDate || !lastDate) {
+      return '';
+    }
+    return `${firstDate.dateLabel}（${firstDate.weekdayLabel}）〜${lastDate.dateLabel}（${lastDate.weekdayLabel}）`;
+  }, [visibleDates]);
 
-  const loadReservationGrid = useCallback(async () => {
+  const loadReservationGrid = useCallback(async (options?: { preserveMessage?: boolean }) => {
     const client = getSupabaseClient();
 
     if (!client) {
-      const demoData = buildDemoData(selectedMenuId);
+      const demoData = buildDemoData(selectedMenuId, visibleDates);
       setMenus(demoData.menus);
       setSlots(demoData.slots);
       setIsDemoMode(true);
@@ -154,14 +199,14 @@ export default function ReservePage() {
 
     setLoading(true);
     setIsDemoMode(false);
-    setMessage(null);
+    if (!options?.preserveMessage) {
+      setMessage(null);
+    }
 
     const { data: userData } = await client.auth.getUser();
     const currentUserId = userData.user?.id ?? null;
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 14);
+    const rangeStart = addDays(startOfToday(), rangeStartOffset);
+    const rangeEnd = addDays(rangeStart, displayMode === 'threeDays' ? 3 : 7);
 
     const { data: menuRows, error: menuError } = await client
       .from('menus')
@@ -198,8 +243,8 @@ export default function ReservePage() {
       .from('reservation_slots')
       .select('id,menu_id,starts_at,ends_at,capacity,is_open')
       .eq('menu_id', activeMenuId)
-      .gte('starts_at', start.toISOString())
-      .lte('starts_at', end.toISOString())
+      .gte('starts_at', rangeStart.toISOString())
+      .lt('starts_at', rangeEnd.toISOString())
       .order('starts_at', { ascending: true });
 
     if (slotError) {
@@ -252,7 +297,7 @@ export default function ReservePage() {
       now
     })));
     setLoading(false);
-  }, [selectedMenuId]);
+  }, [displayMode, rangeStartOffset, selectedMenuId, visibleDates]);
 
   useEffect(() => {
     void loadReservationGrid();
@@ -260,6 +305,12 @@ export default function ReservePage() {
 
   const handleReserve = async (slotId: string) => {
     if (submittingSlotId) {
+      return;
+    }
+
+    const targetSlot = slots.find((slot) => slot.id === slotId);
+    if (!targetSlot || targetSlot.isPast || !targetSlot.isOpen || targetSlot.remainingSeats <= 0 || targetSlot.isBookedByCurrentUser) {
+      setMessage('この枠は現在予約できません。画面を更新して最新の状態を確認してください。');
       return;
     }
 
@@ -279,12 +330,16 @@ export default function ReservePage() {
       return;
     }
 
-    const { error } = await client.from('reservations').insert({
-      reservation_slot_id: slotId,
-      member_id: userData.user.id,
-      status: 'booked',
-      created_by: userData.user.id
-    });
+    const { data: createdReservation, error } = await client
+      .from('reservations')
+      .insert({
+        reservation_slot_id: slotId,
+        member_id: userData.user.id,
+        status: 'booked',
+        created_by: userData.user.id
+      })
+      .select('id')
+      .single();
 
     if (error) {
       setMessage(getFriendlyErrorMessage(error.message));
@@ -293,9 +348,26 @@ export default function ReservePage() {
       return;
     }
 
+    const { data: sessionData } = await client.auth.getSession();
+    if (createdReservation?.id && sessionData.session?.access_token) {
+      void fetch('/api/reservations/notify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sessionData.session.access_token}`
+        },
+        body: JSON.stringify({ reservationId: createdReservation.id })
+      });
+    }
+
+    await loadReservationGrid({ preserveMessage: true });
     setMessage('予約が完了しました。予約一覧から内容を確認できます。');
     setSubmittingSlotId(null);
-    await loadReservationGrid();
+  };
+
+  const handleDisplayModeChange = (nextDisplayMode: DisplayMode) => {
+    setDisplayMode(nextDisplayMode);
+    setRangeStartOffset(0);
   };
 
   return (
@@ -327,19 +399,58 @@ export default function ReservePage() {
           ))}
         </section>
         <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h2 className="text-2xl font-black">{selectedMenu?.name ?? '予約枠'} の空き枠</h2>
-              <p className="mt-1 text-sm text-gray-600">横にスクロールすると別日程を確認できます。</p>
+              <p className="mt-1 text-sm text-gray-600">表示期間: {visibleRangeLabel}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setRangeStartOffset((current) => Math.max(0, current - (displayMode === 'threeDays' ? 3 : 7)))}
+                disabled={rangeStartOffset === 0}
+                className="rounded-full border border-gray-300 px-4 py-2 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                前へ
+              </button>
+              <button
+                type="button"
+                onClick={() => setRangeStartOffset((current) => current + (displayMode === 'threeDays' ? 3 : 7))}
+                className="rounded-full border border-gray-900 px-4 py-2 text-sm font-bold"
+              >
+                次の{displayMode === 'threeDays' ? '3日' : '1週間'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDisplayModeChange('threeDays')}
+                className={`rounded-full px-4 py-2 text-sm font-bold ${displayMode === 'threeDays' ? 'bg-yellow-400 text-gray-950' : 'border border-gray-300'}`}
+              >
+                3日表示
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDisplayModeChange('week')}
+                className={`rounded-full px-4 py-2 text-sm font-bold ${displayMode === 'week' ? 'bg-yellow-400 text-gray-950' : 'border border-gray-300'}`}
+              >
+                1週間表示
+              </button>
             </div>
             {loading && <p className="text-sm font-bold text-gray-500">読み込み中です...</p>}
           </div>
-          {!loading && <ReservationGrid slots={slots} submittingSlotId={submittingSlotId} onReserve={handleReserve} />}
+          {!loading && (
+            <ReservationGrid
+              dates={visibleDates}
+              slots={slots}
+              submittingSlotId={submittingSlotId}
+              timeLabels={standardTimeLabels}
+              onReserve={handleReserve}
+            />
+          )}
           {loading && <div className="rounded-2xl border border-gray-100 bg-gray-50 p-6 font-bold text-gray-600">予約枠を読み込んでいます。</div>}
         </section>
         <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5">
           <h2 className="font-black">表示について</h2>
-          <p className="mt-2 text-sm text-gray-700">「予約する」は受付中、「予約済み」はご自身の予約、「満席」は残席なし、「受付終了」は開始済みの枠です。残席はキャンセル済み予約を除いた予約中の件数から計算します。</p>
+          <p className="mt-2 text-sm text-gray-700">「予約する」は受付中、「予約済み」はご自身の予約、「満席」は残席なし、「受付終了」は開始済みの枠、「休み」はその時間の予約枠が未作成の状態です。木曜日や休業日でも、管理者が枠を作成すると予約可能として表示されます。</p>
         </section>
       </div>
     </AppShell>
