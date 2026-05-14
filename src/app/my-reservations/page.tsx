@@ -10,7 +10,6 @@ type ReservationRow = {
   reservation_slot_id: string | null;
   status: string | null;
   created_at: string | null;
-  cancelled_at?: string | null;
 };
 
 type ReservationSlotRow = {
@@ -133,7 +132,7 @@ export default function MyReservationsPage() {
 
     const { data, error } = await client
       .from('reservations')
-      .select('id,reservation_slot_id,status,created_at,cancelled_at')
+      .select('id,reservation_slot_id,status,created_at')
       .eq('member_id', userData.user.id)
       .order('created_at', { ascending: false });
 
@@ -239,11 +238,7 @@ export default function MyReservationsPage() {
 
     const { error } = await client
       .from('reservations')
-      .update({
-        status: 'cancelled',
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: userData.user.id
-      })
+      .update({ status: 'cancelled' })
       .eq('id', reservationId)
       .eq('member_id', userData.user.id);
 

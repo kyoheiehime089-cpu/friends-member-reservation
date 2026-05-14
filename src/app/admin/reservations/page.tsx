@@ -168,14 +168,9 @@ export default function AdminReservationsPage() {
     }
 
     setCancellingId(reservationId);
-    const { data: userData } = await client.auth.getUser();
     const { error } = await client
       .from('reservations')
-      .update({
-        status: 'cancelled',
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: userData.user?.id ?? null
-      })
+      .update({ status: 'cancelled' })
       .eq('id', reservationId);
 
     if (error) {
