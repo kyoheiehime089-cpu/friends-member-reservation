@@ -42,6 +42,13 @@ type LoadResult = {
 
 type DisplayMode = 'threeDays' | 'week';
 
+type FeedbackKind = 'success' | 'error' | 'info';
+
+type Feedback = {
+  kind: FeedbackKind;
+  text: string;
+};
+
 const gridTimeZone = 'Asia/Tokyo';
 const standardTimeLabels = ['10:00', '10:50', '11:40', '12:30', '18:30', '19:20', '20:10', '21:00'];
 const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
@@ -149,7 +156,7 @@ function buildDemoData(selectedMenuId: string, visibleDates: ReservationGridDate
 
 function getFriendlyErrorMessage(errorMessage: string) {
   if (errorMessage.includes('duplicate key') || errorMessage.includes('reservations_reservation_slot_id_member_id_key')) {
-    return 'この枠はすでに予約済みです。画面を更新して最新の状態を確認してください。';
+    return 'この枠はすでに予約済みです。予約一覧をご確認ください。';
   }
 
   if (errorMessage.includes('定員')) {
@@ -157,17 +164,31 @@ function getFriendlyErrorMessage(errorMessage: string) {
   }
 
   if (errorMessage.includes('row-level security')) {
-    return '予約できませんでした。会員情報またはログイン状態を確認してください。';
+    return '予約できませんでした。ログイン状態、または会員情報の設定を確認してください。';
+  }
+
+  if (errorMessage.includes('foreign key') || errorMessage.includes('violates foreign key constraint')) {
+    return '予約できませんでした。会員情報の初期登録が未完了です。管理者にお問い合わせください。';
   }
 
   return `予約処理でエラーが発生しました: ${errorMessage}`;
+}
+
+function feedbackClassName(kind: FeedbackKind) {
+  if (kind === 'success') {
+    return 'border-green-200 bg-green-50 text-green-900';
+  }
+  if (kind === 'error') {
+    return 'border-red-200 bg-red-50 text-red-900';
+  }
+  return 'border-yellow-200 bg-yellow-50 text-yellow-900';
 }
 
 export default function ReservePage() {
   const [selectedMenuId, setSelectedMenuId] = useState(initialMenus[0].id);
   const [menus, setMenus] = useState<MenuOption[]>(initialMenus.map((menu) => ({ ...menu })));
   const [slots, setSlots] = useState<ReservationGridSlot[]>([]);
-  const [message, setMessage] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [loading, setLoading] = useState(true);
   const [submittingSlotId, setSubmittingSlotId] = useState<string | null>(null);
   const [isDemoMode, setIsDemoMode] = useState(!isSupabaseConfigured);
@@ -185,7 +206,15 @@ export default function ReservePage() {
     return `${firstDate.dateLabel}（${firstDate.weekdayLabel}）〜${lastDate.dateLabel}（${lastDate.weekdayLabel}）`;
   }, [visibleDates]);
 
-  const loadReservationGrid = useCallback(async (options?: { preserveMessage?: boolean }) => {
+  const showFeedback = useCallback((kind: FeedbackKind, text: string, options?: { alert?: boolean }) => {
+    setFeedback({ kind, text });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (options?.alert) {
+      window.alert(text);
+    }
+  }, []);
+
+  const loadReservationGrid = useCallback(async (options?: { preserveFeedback?: boolean }) => {
     const client = getSupabaseClient();
 
     if (!client) {
@@ -199,8 +228,8 @@ export default function ReservePage() {
 
     setLoading(true);
     setIsDemoMode(false);
-    if (!options?.preserveMessage) {
-      setMessage(null);
+    if (!options?.preserveFeedback) {
+      setFeedback(null);
     }
 
     const { data: userData } = await client.auth.getUser();
@@ -215,7 +244,7 @@ export default function ReservePage() {
       .order('name', { ascending: true });
 
     if (menuError) {
-      setMessage(`メニューの読み込みに失敗しました: ${menuError.message}`);
+      showFeedback('error', `メニューの読み込みに失敗しました: ${menuError.message}`);
       setLoading(false);
       return;
     }
@@ -248,7 +277,7 @@ export default function ReservePage() {
       .order('starts_at', { ascending: true });
 
     if (slotError) {
-      setMessage(`予約枠の読み込みに失敗しました: ${slotError.message}`);
+      showFeedback('error', `予約枠の読み込みに失敗しました: ${slotError.message}`);
       setLoading(false);
       return;
     }
@@ -262,7 +291,7 @@ export default function ReservePage() {
       const { data: countRows, error: countError } = await client.rpc('get_slot_booking_counts', { slot_ids: slotIds });
 
       if (countError) {
-        setMessage('予約数集計のSupabase設定が未適用です。管理者にお問い合わせください。');
+        showFeedback('error', `予約数集計のSupabase設定が未適用です: ${countError.message}`);
         setSlots([]);
         setLoading(false);
         return;
@@ -297,7 +326,7 @@ export default function ReservePage() {
       now
     })));
     setLoading(false);
-  }, [displayMode, rangeStartOffset, selectedMenuId, visibleDates]);
+  }, [displayMode, rangeStartOffset, selectedMenuId, showFeedback, visibleDates]);
 
   useEffect(() => {
     void loadReservationGrid();
@@ -310,23 +339,24 @@ export default function ReservePage() {
 
     const targetSlot = slots.find((slot) => slot.id === slotId);
     if (!targetSlot || targetSlot.isPast || !targetSlot.isOpen || targetSlot.remainingSeats <= 0 || targetSlot.isBookedByCurrentUser) {
-      setMessage('この枠は現在予約できません。画面を更新して最新の状態を確認してください。');
+      showFeedback('error', 'この枠は現在予約できません。画面を更新して最新の状態を確認してください。', { alert: true });
       return;
     }
 
     const client = getSupabaseClient();
     if (!client) {
-      setMessage('現在はデモ・セットアップモードです。Supabase環境変数を設定すると実際に予約できます。');
+      showFeedback('error', '現在はデモ・セットアップモードです。Supabase環境変数を設定すると実際に予約できます。', { alert: true });
       return;
     }
 
     setSubmittingSlotId(slotId);
-    setMessage(null);
+    setFeedback({ kind: 'info', text: '予約を保存しています。画面を閉じずにお待ちください。' });
 
     const { data: userData } = await client.auth.getUser();
     if (!userData.user) {
-      setMessage('ログイン後に予約できます。ログインページからメールアドレスでログインしてください。');
+      showFeedback('error', 'ログイン後に予約できます。ログインページへ移動します。', { alert: true });
       setSubmittingSlotId(null);
+      window.location.href = '/login';
       return;
     }
 
@@ -342,11 +372,28 @@ export default function ReservePage() {
       .single();
 
     if (error) {
-      setMessage(getFriendlyErrorMessage(error.message));
+      const friendlyMessage = getFriendlyErrorMessage(error.message);
+      showFeedback('error', friendlyMessage, { alert: true });
       setSubmittingSlotId(null);
-      void loadReservationGrid();
+      void loadReservationGrid({ preserveFeedback: true });
       return;
     }
+
+    setSlots((currentSlots) => currentSlots.map((slot) => {
+      if (slot.id !== slotId) {
+        return slot;
+      }
+      const bookedCount = slot.bookedCount + 1;
+      return {
+        ...slot,
+        bookedCount,
+        remainingSeats: Math.max(slot.capacity - bookedCount, 0),
+        isBookedByCurrentUser: true
+      };
+    }));
+
+    showFeedback('success', '予約が完了しました。予約一覧に移動して内容を確認します。', { alert: true });
+    setSubmittingSlotId(null);
 
     const { data: sessionData } = await client.auth.getSession();
     if (createdReservation?.id && sessionData.session?.access_token) {
@@ -360,9 +407,9 @@ export default function ReservePage() {
       });
     }
 
-    await loadReservationGrid({ preserveMessage: true });
-    setMessage('予約が完了しました。予約一覧から内容を確認できます。');
-    setSubmittingSlotId(null);
+    window.setTimeout(() => {
+      window.location.href = '/my-reservations';
+    }, 700);
   };
 
   const handleDisplayModeChange = (nextDisplayMode: DisplayMode) => {
@@ -383,7 +430,7 @@ export default function ReservePage() {
             デモ・セットアップモードで表示しています。Supabase環境変数を設定すると実際の予約枠を読み込みます。
           </div>
         )}
-        {message && <div className="rounded-2xl bg-yellow-100 p-4 font-bold text-yellow-900">{message}</div>}
+        {feedback && <div className={`rounded-2xl border p-4 font-bold ${feedbackClassName(feedback.kind)}`}>{feedback.text}</div>}
         <section className="grid gap-3 md:grid-cols-3">
           {menus.map((menu) => (
             <button
@@ -437,6 +484,7 @@ export default function ReservePage() {
             </div>
             {loading && <p className="text-sm font-bold text-gray-500">読み込み中です...</p>}
           </div>
+          {feedback && <div className={`mb-4 rounded-2xl border p-4 font-bold ${feedbackClassName(feedback.kind)}`}>{feedback.text}</div>}
           {!loading && (
             <ReservationGrid
               dates={visibleDates}
