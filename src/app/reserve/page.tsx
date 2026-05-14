@@ -160,6 +160,10 @@ function getFriendlyErrorMessage(errorMessage: string) {
     return '予約できませんでした。会員情報またはログイン状態を確認してください。';
   }
 
+  if (errorMessage.includes('created_by') || errorMessage.includes('cancelled_at') || errorMessage.includes('cancelled_by')) {
+    return '予約DBの列設定に差があります。最新の修正を反映後にもう一度お試しください。';
+  }
+
   return `予約処理でエラーが発生しました: ${errorMessage}`;
 }
 
@@ -335,8 +339,7 @@ export default function ReservePage() {
       .insert({
         reservation_slot_id: slotId,
         member_id: userData.user.id,
-        status: 'booked',
-        created_by: userData.user.id
+        status: 'booked'
       })
       .select('id')
       .single();
@@ -347,6 +350,21 @@ export default function ReservePage() {
       void loadReservationGrid();
       return;
     }
+
+    setSlots((currentSlots) => currentSlots.map((slot) => {
+      if (slot.id !== slotId) {
+        return slot;
+      }
+      const nextBookedCount = slot.bookedCount + 1;
+      return {
+        ...slot,
+        bookedCount: nextBookedCount,
+        remainingSeats: Math.max(slot.capacity - nextBookedCount, 0),
+        isBookedByCurrentUser: true
+      };
+    }));
+    setMessage('予約が完了しました。予約一覧から内容を確認できます。');
+    setSubmittingSlotId(null);
 
     const { data: sessionData } = await client.auth.getSession();
     if (createdReservation?.id && sessionData.session?.access_token) {
@@ -360,9 +378,7 @@ export default function ReservePage() {
       });
     }
 
-    await loadReservationGrid({ preserveMessage: true });
-    setMessage('予約が完了しました。予約一覧から内容を確認できます。');
-    setSubmittingSlotId(null);
+    void loadReservationGrid({ preserveMessage: true });
   };
 
   const handleDisplayModeChange = (nextDisplayMode: DisplayMode) => {
