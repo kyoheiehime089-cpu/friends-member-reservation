@@ -283,7 +283,9 @@ export async function POST(request: Request) {
     }, { status: 400 });
   }
 
-  const { data: reservationData, error: reservationError } = await dbClient
+  // Insert reservations with the user-scoped client so DB triggers can still see auth.uid().
+  // Reads/logging may use service_role, but the actual booking write should remain user-bound.
+  const { data: reservationData, error: reservationError } = await userClient
     .from('reservations')
     .insert({
       reservation_slot_id: slot.id,
