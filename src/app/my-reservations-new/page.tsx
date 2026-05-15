@@ -1,0 +1,93 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AppShell } from '@/components/AppShell';
+import { SupabaseNotice } from '@/components/SupabaseNotice';
+import { getSupabaseClient } from '@/lib/supabaseClient';
+
+type ReservationRow = { id: string; reservation_slot_id: string | null; status: string | null; created_at: string | null };
+type SlotRow = { id: string; menu_id: string | null; starts_at: string | null; ends_at: string | null };
+type MenuRow = { id: string; name: string };
+type DisplayReservation = { id: string; date: string; weekday: string; startTime: string; endTime: string; menu: string; status: string; createdAt: string; cancelable: boolean };
+
+type CancelResponse = { ok?: boolean; message?: string };
+
+const zone = 'Asia/Tokyo';
+const dateFmt = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: zone });
+const weekFmt = new Intl.DateTimeFormat('ja-JP', { weekday: 'short', timeZone: zone });
+const timeFmt = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone });
+const dateTimeFmt = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone });
+
+function formatDate(value?: string | null) { return value ? dateFmt.format(new Date(value)) : '日時未設定'; }
+function formatWeekday(value?: string | null) { return value ? weekFmt.format(new Date(value)) : ''; }
+function formatTime(value?: string | null) { return value ? timeFmt.format(new Date(value)) : ''; }
+function formatDateTime(value?: string | null) { return value ? dateTimeFmt.format(new Date(value)) : '記録なし'; }
+function statusLabel(status?: string | null) { if (status === 'cancelled') return 'キャンセル済み'; if (status === 'attended') return '来店済み'; if (status === 'no_show') return '無断キャンセル'; return '予約中'; }
+
+export default function MyReservationsNewPage() {
+  const [message, setMessage] = useState<string | null>(null);
+  const [reservations, setReservations] = useState<ReservationRow[]>([]);
+  const [slotsById, setSlotsById] = useState<Map<string, SlotRow>>(new Map());
+  const [menusById, setMenusById] = useState<Map<string, MenuRow>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const loadReservations = useCallback(async () => {
+    const client = getSupabaseClient();
+    if (!client) { setMessage('Supabase環境変数を設定してください。'); setLoading(false); return; }
+    setLoading(true);
+    const { data: userData } = await client.auth.getUser();
+    if (!userData.user) { setMessage('ログイン後に予約一覧を確認できます。'); setReservations([]); setLoading(false); return; }
+
+    const { data, error } = await client.from('reservations').select('id,reservation_slot_id,status,created_at').eq('member_id', userData.user.id).order('created_at', { ascending: false });
+    if (error) { setMessage(`予約一覧の読み込みに失敗しました: ${error.message}`); setLoading(false); return; }
+
+    const nextReservations = (data ?? []) as ReservationRow[];
+    setReservations(nextReservations);
+    const slotIds = Array.from(new Set(nextReservations.map((r) => r.reservation_slot_id).filter(Boolean))) as string[];
+    if (slotIds.length === 0) { setSlotsById(new Map()); setMenusById(new Map()); setLoading(false); return; }
+
+    const { data: slotRows, error: slotError } = await client.from('reservation_slots').select('id,menu_id,starts_at,ends_at').in('id', slotIds);
+    if (slotError) { setMessage(`予約枠情報の読み込みに失敗しました: ${slotError.message}`); setLoading(false); return; }
+    const slots = (slotRows ?? []) as SlotRow[];
+    setSlotsById(new Map(slots.map((slot) => [slot.id, slot])));
+
+    const menuIds = Array.from(new Set(slots.map((slot) => slot.menu_id).filter(Boolean))) as string[];
+    if (menuIds.length > 0) {
+      const { data: menuRows, error: menuError } = await client.from('menus').select('id,name').in('id', menuIds);
+      if (menuError) { setMessage(`メニュー情報の読み込みに失敗しました: ${menuError.message}`); setLoading(false); return; }
+      setMenusById(new Map(((menuRows ?? []) as MenuRow[]).map((menu) => [menu.id, menu])));
+    } else {
+      setMenusById(new Map());
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { void loadReservations(); }, [loadReservations]);
+
+  const rows = useMemo<DisplayReservation[]>(() => reservations.map((reservation) => {
+    const slot = reservation.reservation_slot_id ? slotsById.get(reservation.reservation_slot_id) : null;
+    const menu = slot?.menu_id ? menusById.get(slot.menu_id) : null;
+    return { id: reservation.id, date: formatDate(slot?.starts_at), weekday: formatWeekday(slot?.starts_at), startTime: formatTime(slot?.starts_at), endTime: formatTime(slot?.ends_at), menu: menu?.name ?? '予約枠', status: statusLabel(reservation.status), createdAt: formatDateTime(reservation.created_at), cancelable: reservation.status === 'booked' };
+  }), [menusById, reservations, slotsById]);
+
+  const cancelReservation = async (reservationId: string, cancelable: boolean) => {
+    if (!cancelable) { setMessage('すでにキャンセル済みです。'); return; }
+    if (!window.confirm('この予約をキャンセルしますか？')) return;
+    const client = getSupabaseClient();
+    if (!client) { setMessage('Supabase環境変数を設定してください。'); return; }
+    setCancellingId(reservationId);
+    const { data: sessionData } = await client.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) { setMessage('ログイン後にキャンセルできます。'); setCancellingId(null); return; }
+
+    const response = await fetch('/api/reservations/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ reservationId }) });
+    const result = await response.json().catch(() => ({})) as CancelResponse;
+    if (!response.ok || !result.ok) { setMessage(result.message ?? 'キャンセル処理に失敗しました。'); setCancellingId(null); return; }
+    setMessage(result.message ?? 'キャンセルしました。空き枠の残席にも反映されます。');
+    setCancellingId(null);
+    await loadReservations();
+  };
+
+  return <AppShell><div className="space-y-6"><SupabaseNotice /><div><h1 className="text-3xl font-black">自分の予約一覧</h1><p className="mt-2 text-gray-600">予約内容の確認とキャンセルができます。</p></div>{message && <div className="rounded-2xl bg-yellow-100 p-4 font-bold text-yellow-900">{message}</div>}{loading && <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">読み込み中です。</div>}{!loading && rows.length === 0 && <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">予約はまだありません。</div>}<div className="grid gap-3">{rows.map((reservation) => <div key={reservation.id} className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xl font-black">{reservation.date}（{reservation.weekday}） {reservation.startTime}〜{reservation.endTime}</p><p className="font-semibold text-gray-600">{reservation.menu} / {reservation.status}</p><p className="mt-1 text-xs font-bold text-gray-400">予約作成: {reservation.createdAt}</p>{!reservation.cancelable && <p className="mt-2 text-sm font-bold text-red-600">キャンセル済み、または変更できない予約です。</p>}</div><button type="button" onClick={() => cancelReservation(reservation.id, reservation.cancelable)} className="rounded-full border border-gray-900 px-5 py-2 font-bold disabled:opacity-40" disabled={!reservation.cancelable || cancellingId === reservation.id}>{cancellingId === reservation.id ? '処理中...' : 'キャンセル'}</button></div></div>)}</div></div></AppShell>;
+}
