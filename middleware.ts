@@ -7,9 +7,15 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(url);
   }
 
+  if (request.nextUrl.pathname === '/my-reservations') {
+    const url = request.nextUrl.clone();
+    url.pathname = '/my-reservations-new';
+    return NextResponse.rewrite(url);
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/reserve']
+  matcher: ['/reserve', '/my-reservations']
 };
