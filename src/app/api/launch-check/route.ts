@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,8 +10,8 @@ type CheckResult = {
   message: string | null;
 };
 
-async function checkSelect(client: ReturnType<typeof createClient>, name: string, table: string, columns: string): Promise<CheckResult> {
-  const { error } = await client.from(table).select(columns, { head: true, count: 'exact' }).limit(1);
+async function checkSelect(client: SupabaseClient, name: string, table: string, columns: string): Promise<CheckResult> {
+  const { error } = await client.from(table).select(columns).limit(1);
   return { name, ok: !error, message: error?.message ?? null };
 }
 
