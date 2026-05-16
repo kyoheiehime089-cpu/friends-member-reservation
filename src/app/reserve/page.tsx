@@ -199,11 +199,7 @@ export default function ReservePage() {
           .in('reservation_slot_id', slotIds)
           .eq('status', 'booked');
         ((ownRows ?? []) as OwnRow[]).forEach((row) => ownBooked.add(row.reservation_slot_id));
-
-        typedSlots.forEach((slot) => {
-          if (ownBooked.has(slot.id)) sameDayBookedDates.add(keyFmt.format(new Date(slot.starts_at)));
-        });
-
+        typedSlots.forEach((slot) => { if (ownBooked.has(slot.id)) sameDayBookedDates.add(keyFmt.format(new Date(slot.starts_at))); });
         const { data: allOwnRows } = await client
           .from('reservations')
           .select('reservation_slot_id')
@@ -221,9 +217,7 @@ export default function ReservePage() {
     setLoading(false);
   }, [mode, offset, selectedMenuId, show]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const reserve = async (slotId: string) => {
     if (submittingSlotId) return;
@@ -233,10 +227,7 @@ export default function ReservePage() {
       return;
     }
     const client = getSupabaseClient();
-    if (!client) {
-      show('error', 'Supabase環境変数を設定してください。');
-      return;
-    }
+    if (!client) { show('error', 'Supabase環境変数を設定してください。'); return; }
     setSubmittingSlotId(slotId);
     setFeedback({ kind: 'info', text: '予約を保存しています。' });
     const { data: sessionData } = await client.auth.getSession();
@@ -270,30 +261,23 @@ export default function ReservePage() {
     }
   };
 
-  const setDisplayMode = (nextMode: DisplayMode) => {
-    setMode(nextMode);
-    setOffset(0);
-  };
-
-  const selectMenu = (menuId: string) => {
-    setSelectedMenuId(menuId);
-    setOffset(0);
-    setFeedback(null);
-  };
-
-  const resetMenu = () => {
-    setSelectedMenuId('');
-    setSlots([]);
-    setOffset(0);
-    setFeedback(null);
-  };
-
+  const setDisplayMode = (nextMode: DisplayMode) => { setMode(nextMode); setOffset(0); };
+  const selectMenu = (menuId: string) => { setSelectedMenuId(menuId); setOffset(0); setFeedback(null); };
+  const resetMenu = () => { setSelectedMenuId(''); setSlots([]); setOffset(0); setFeedback(null); };
   const showMenuPicker = !selectedMenuId;
 
   return (
     <AppShell>
       <div className="space-y-4">
         <SupabaseNotice />
+        <section className="rounded-3xl border-2 border-yellow-300 bg-yellow-50 p-4 shadow-sm">
+          <p className="text-xs font-black text-yellow-700">管理者用</p>
+          <h2 className="mt-1 text-xl font-black text-gray-950">会員作成・管理はこちら</h2>
+          <p className="mt-1 text-sm font-bold text-gray-600">会員作成、プラン変更、予約枠管理を行う場合は下のボタンを押してください。</p>
+          <a href="/admin/members?v=admin-entry-6" className="mt-3 inline-block rounded-full bg-gray-900 px-6 py-3 text-sm font-black text-white">
+            管理者画面を開く
+          </a>
+        </section>
 
         {showMenuPicker ? (
           <>
@@ -301,19 +285,12 @@ export default function ReservePage() {
               <h1 className="text-3xl font-black">予約する</h1>
               <p className="text-sm font-semibold text-gray-600">まず予約したいメニューを選んでください。</p>
             </div>
-
             {feedback && <div className={`whitespace-pre-line rounded-2xl border p-4 text-sm font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
-
             <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
               <div className="space-y-3">
                 {loading && <div className="rounded-2xl bg-gray-50 p-5 text-center text-sm font-bold text-gray-600">メニューを読み込んでいます。</div>}
                 {!loading && menus.map((menu) => (
-                  <button
-                    key={menu.id}
-                    type="button"
-                    onClick={() => selectMenu(menu.id)}
-                    className="flex w-full items-center justify-between gap-4 rounded-3xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-yellow-300 hover:bg-yellow-50"
-                  >
+                  <button key={menu.id} type="button" onClick={() => selectMenu(menu.id)} className="flex w-full items-center justify-between gap-4 rounded-3xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-yellow-300 hover:bg-yellow-50">
                     <div className="min-w-0 flex-1">
                       <p className="text-2xl font-black text-gray-950">{menu.name}</p>
                       <p className="mt-1 text-sm font-bold text-gray-500">定員目安 {menu.capacity}名</p>
@@ -329,17 +306,10 @@ export default function ReservePage() {
         ) : (
           <>
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h1 className="text-2xl font-black">{selectedMenu?.name} の予約</h1>
-                <p className="text-xs font-bold text-gray-500">{rangeLabel}</p>
-              </div>
-              <button type="button" onClick={resetMenu} className="rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black text-gray-700 shadow-sm">
-                メニュー変更
-              </button>
+              <div><h1 className="text-2xl font-black">{selectedMenu?.name} の予約</h1><p className="text-xs font-bold text-gray-500">{rangeLabel}</p></div>
+              <button type="button" onClick={resetMenu} className="rounded-full border border-gray-300 bg-white px-4 py-2 text-xs font-black text-gray-700 shadow-sm">メニュー変更</button>
             </div>
-
             {feedback && <div className={`whitespace-pre-line rounded-2xl border p-4 text-sm font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
-
             <section className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm">
               <div className="mb-3 grid grid-cols-4 gap-2">
                 <button type="button" onClick={() => setOffset((current) => Math.max(0, current - (mode === 'threeDays' ? 3 : 7)))} disabled={offset === 0} className="rounded-full border border-gray-300 px-2 py-2 text-xs font-black disabled:cursor-not-allowed disabled:opacity-40">前</button>
@@ -347,14 +317,10 @@ export default function ReservePage() {
                 <button type="button" onClick={() => setDisplayMode('week')} className={`rounded-full px-2 py-2 text-xs font-black ${mode === 'week' ? 'bg-yellow-400 text-gray-950' : 'border border-gray-300 text-gray-700'}`}>1週間</button>
                 <button type="button" onClick={() => setOffset((current) => current + (mode === 'threeDays' ? 3 : 7))} className="rounded-full border border-gray-900 px-2 py-2 text-xs font-black">次</button>
               </div>
-
               {!loading && <ReservationGrid dense dates={dates} slots={slots} submittingSlotId={submittingSlotId} timeLabels={standardTimes} onReserve={reserve} />}
               {loading && <div className="rounded-2xl border border-gray-100 bg-gray-50 p-5 text-center text-sm font-bold text-gray-600">予約枠を読み込んでいます。</div>}
             </section>
-
-            <section className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3 text-xs font-bold text-gray-700">
-              <p>表示: 予約=予約可 / 済=予約済み / 同日=同日予約済み / 終=受付終了 / 空欄=枠なし</p>
-            </section>
+            <section className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3 text-xs font-bold text-gray-700"><p>表示: 予約=予約可 / 済=予約済み / 同日=同日予約済み / 終=受付終了 / 空欄=枠なし</p></section>
           </>
         )}
       </div>
