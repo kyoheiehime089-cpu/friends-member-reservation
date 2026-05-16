@@ -13,7 +13,17 @@ type OwnRow = { reservation_slot_id: string };
 type OwnBookedWithSlotRow = { reservation_slot_id: string | null };
 type FeedbackKind = 'success' | 'error' | 'info';
 type DisplayMode = 'threeDays' | 'week';
-type CreateResponse = { ok?: boolean; message?: string; detail?: string; memberMail?: string; adminMail?: string; mailLogs?: string; mailLogError?: string | null };
+type CreateResponse = {
+  ok?: boolean;
+  message?: string;
+  detail?: string;
+  memberMail?: string;
+  memberMailError?: string | null;
+  adminMail?: string;
+  adminMailError?: string | null;
+  mailLogs?: string;
+  mailLogError?: string | null;
+};
 
 const zone = 'Asia/Tokyo';
 const standardTimes = ['10:00', '10:50', '11:40', '12:30', '18:30', '19:20', '20:10', '21:00'];
@@ -61,10 +71,12 @@ function bookingSuccessMessage(result: CreateResponse) {
     return '予約が完了しました。予約完了メールも送信しました。';
   }
   if (result.memberMail === 'failed') {
-    return '予約は完了しましたが、予約完了メールの送信に失敗しました。Resendまたは送信元メール設定を確認してください。';
+    const detail = result.memberMailError ? `\n\n原因: ${result.memberMailError}` : '';
+    return `予約は完了しましたが、予約完了メールの送信に失敗しました。Resendまたは送信元メール設定を確認してください。${detail}`;
   }
   if (result.memberMail === 'skipped') {
-    return '予約は完了しましたが、メール設定不足のため予約完了メールはスキップされました。';
+    const detail = result.memberMailError ? `\n\n原因: ${result.memberMailError}` : '';
+    return `予約は完了しましたが、メール設定不足のため予約完了メールはスキップされました。${detail}`;
   }
   return '予約が完了しました。予約一覧に移動して内容を確認します。';
 }
@@ -243,7 +255,7 @@ export default function ReservePage() {
       }
       show('success', bookingSuccessMessage(result));
       setSubmittingSlotId(null);
-      window.setTimeout(() => { window.location.href = '/my-reservations'; }, 1400);
+      window.setTimeout(() => { window.location.href = '/my-reservations'; }, 2200);
     } catch (error) {
       show('error', friendly(error instanceof Error ? error.message : '通信エラーが発生しました。'));
       setSubmittingSlotId(null);
@@ -264,7 +276,7 @@ export default function ReservePage() {
           <h1 className="text-3xl font-black">予約する</h1>
           <p className="mt-2 text-gray-600">日付と時間が交差する枠を選んで予約してください。</p>
         </div>
-        {feedback && <div className={`rounded-2xl border p-4 font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
+        {feedback && <div className={`whitespace-pre-line rounded-2xl border p-4 font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
         <section className="grid gap-3 md:grid-cols-3">
           {menus.map((menu) => (
             <button key={menu.id} type="button" onClick={() => setSelectedMenuId(menu.id)} className={`rounded-2xl border p-5 text-left shadow-sm ${selectedMenuId === menu.id ? 'border-yellow-400 bg-yellow-100' : 'border-gray-200 bg-white'}`}>
@@ -288,7 +300,7 @@ export default function ReservePage() {
             </div>
             {loading && <p className="text-sm font-bold text-gray-500">読み込み中です...</p>}
           </div>
-          {feedback && <div className={`mb-4 rounded-2xl border p-4 font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
+          {feedback && <div className={`whitespace-pre-line mb-4 rounded-2xl border p-4 font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
           {!loading && <ReservationGrid dates={dates} slots={slots} submittingSlotId={submittingSlotId} timeLabels={standardTimes} onReserve={reserve} />}
           {loading && <div className="rounded-2xl border border-gray-100 bg-gray-50 p-6 font-bold text-gray-600">予約枠を読み込んでいます。</div>}
         </section>
