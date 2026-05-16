@@ -19,9 +19,7 @@ export function createUserClient(supabaseUrl: string, anonKey: string, token: st
 }
 
 export function createServiceClient(supabaseUrl: string, serviceKey: string) {
-  return createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
+  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
 function normalizeEmail(value?: string | null) {
@@ -30,56 +28,28 @@ function normalizeEmail(value?: string | null) {
 
 export async function requireAdmin(request: Request) {
   const config = getAdminConfig();
-  if (!config) {
-    return { ok: false as const, status: 500, message: 'Supabase環境変数が未設定です。', config: null, adminId: null };
-  }
+  if (!config) return { ok: false as const, status: 500, message: 'Supabase環境変数が未設定です。', config: null, adminId: null };
 
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
-  if (!token) {
-    return { ok: false as const, status: 401, message: 'ログイン情報が確認できません。', config, adminId: null };
-  }
+  if (!token) return { ok: false as const, status: 401, message: 'ログイン情報が確認できません。', config, adminId: null };
 
   const userClient = createUserClient(config.supabaseUrl, config.anonKey, token);
   const { data: userData, error: userError } = await userClient.auth.getUser(token);
-  if (userError || !userData.user) {
-    return { ok: false as const, status: 401, message: 'ログイン情報を確認できません。', config, adminId: null };
-  }
+  if (userError || !userData.user) return { ok: false as const, status: 401, message: 'ログイン情報を確認できません。', config, adminId: null };
 
   const userId = userData.user.id;
   const userEmail = normalizeEmail(userData.user.email);
-  const configuredAdminEmail = normalizeEmail(process.env.ADMIN_NOTIFICATION_EMAIL);
-
-  if (configuredAdminEmail && userEmail === configuredAdminEmail) {
-    return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
-  }
-
   const serviceClient = createServiceClient(config.supabaseUrl, config.serviceKey);
 
-  const { data: adminById, error: idError } = await serviceClient
-    .from('admin_users')
-    .select('id')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (idError) {
-    return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${idError.message}`, config, adminId: null };
-  }
-
-  if (adminById) {
-    return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
-  }
+  const { data: adminById, error: idError } = await serviceClient.from('admin_users').select('id').eq('id', userId).maybeSingle();
+  if (idError) return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${idError.message}`, config, adminId: null };
+  if (adminById) return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
 
   if (userEmail) {
-    const { data: adminByEmail, error: emailError } = await serviceClient
-      .from('admin_users')
-      .select('id')
-      .eq('email', userEmail)
-      .maybeSingle();
-
-    if (!emailError && adminByEmail) {
-      return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
-    }
+    const { data: adminByEmail, error: emailError } = await serviceClient.from('admin_users').select('id').eq('email', userEmail).maybeSingle();
+    if (emailError) return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${emailError.message}`, config, adminId: null };
+    if (adminByEmail) return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
   }
 
-  return { ok: false as const, status: 403, message: '管理者権限がありません。管理者用メールアドレスでサインインしてください。', config, adminId: null };
+  return { ok: false as const, status: 403, message: '管理者権限がありません。会員アカウントでは管理者画面に入れません。', config, adminId: null };
 }
