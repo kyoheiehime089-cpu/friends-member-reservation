@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { allowedMemberStatuses, createServiceClient, requireAdmin, uuidPattern } from '@/lib/adminServer';
+import { createInitialLoginCode, sendMemberLoginGuide } from '@/lib/memberInviteMail';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -77,13 +78,13 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({})) as CreateBody;
   const fullName = body.fullName?.trim();
   const email = body.email?.trim().toLowerCase();
-  const password = body.password?.trim();
+  const loginCode = body.password?.trim() || createInitialLoginCode();
   const planId = typeof body.planId === 'string' && body.planId.trim() ? body.planId.trim() : null;
   const status = body.status?.trim() || '有効';
 
   if (!fullName) return NextResponse.json({ ok: false, message: '会員名を入力してください。' }, { status: 400 });
   if (!email || !email.includes('@')) return NextResponse.json({ ok: false, message: 'メールアドレスを正しく入力してください。' }, { status: 400 });
-  if (!password || password.length < 6) return NextResponse.json({ ok: false, message: '仮パスワードは6文字以上で入力してください。' }, { status: 400 });
+  if (loginCode.length < 6) return NextResponse.json({ ok: false, message: '初期ログインコードは6文字以上で入力してください。' }, { status: 400 });
   if (!allowedMemberStatuses.includes(status)) return NextResponse.json({ ok: false, message: 'status が不正です。' }, { status: 400 });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
@@ -99,7 +100,7 @@ export async function POST(request: Request) {
 
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
     email,
-    password,
+    password: loginCode,
     email_confirm: true,
     user_metadata: { full_name: fullName, name: fullName }
   });
@@ -125,7 +126,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: `会員情報の作成に失敗しました: ${memberError.message}` }, { status: 400 });
   }
 
-  return NextResponse.json({ ok: true, member });
+  const mail = await sendMemberLoginGuide({ to: email, fullName, loginCode });
+
+  return NextResponse.json({ ok: true, member, mail, temporaryLoginCode: mail.ok ? null : loginCode });
 }
 
 export async function PATCH(request: Request) {
