@@ -11,7 +11,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link href="/reserve">予約</Link>
             <Link href="/my-reservations">一覧</Link>
             <Link href="/history">履歴</Link>
-            <Link href="/admin">管理</Link>
+            <a href="/admin/members?v=5" className="text-gray-700">管理</a>
           </nav>
         </div>
       </header>
