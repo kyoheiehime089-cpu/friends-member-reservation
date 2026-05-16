@@ -10,6 +10,7 @@ const dateParts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-
 
 type Slot = { id: string; store_id: string | null; menu_id: string | null; starts_at: string; ends_at: string | null; capacity: number; is_open: boolean | null };
 type Reservation = { id: string; reservation_slot_id: string | null };
+type Member = { id: string; plan_id: string | null; status: string | null };
 type Plan = { name: string; weekly_limit: number | null; unlimited: boolean | null; is_active: boolean | null };
 
 function parts(value: Date | string) {
@@ -48,6 +49,10 @@ function isStillActiveFuture(slot: { starts_at?: string | null; ends_at?: string
   return Boolean(endOrStart && new Date(endOrStart) > now);
 }
 
+function canBookByStatus(status: string | null | undefined) {
+  return !status || status === '有効';
+}
+
 export async function POST(request: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
@@ -79,10 +84,20 @@ export async function POST(request: Request) {
 
   const name = String(user.user_metadata?.full_name || user.user_metadata?.name || user.email || '会員');
   const email = user.email || `${user.id}@no-email.local`;
-  const { data: member } = await db.from('members').select('id,plan_id').eq('id', user.id).maybeSingle();
+  const { data: memberData } = await db.from('members').select('id,plan_id,status').eq('id', user.id).maybeSingle();
+  let member = memberData as Member | null;
   if (!member) {
-    const { error } = await db.from('members').insert({ id: user.id, store_id: slot.store_id, full_name: name, email, status: '有効' });
+    const { data: createdMember, error } = await db
+      .from('members')
+      .insert({ id: user.id, store_id: slot.store_id, full_name: name, email, status: '有効' })
+      .select('id,plan_id,status')
+      .single();
     if (error) return NextResponse.json({ ok: false, message: `会員情報の作成に失敗しました: ${error.message}` }, { status: 400 });
+    member = createdMember as Member;
+  }
+
+  if (!canBookByStatus(member.status)) {
+    return NextResponse.json({ ok: false, message: `現在の会員ステータスは「${member.status}」です。予約をご希望の場合はスタッフにご連絡ください。` }, { status: 403 });
   }
 
   const { data: allReservations, error: reservationReadError } = await db.from('reservations').select('id,reservation_slot_id').eq('member_id', user.id).eq('status', 'booked');
@@ -104,9 +119,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: `同時に保持できる予約は最大${MAX_FUTURE_BOOKINGS}枠までです。予約一覧からキャンセル後に予約してください。` }, { status: 409 });
   }
 
-  const currentMember = member as { plan_id?: string | null } | null;
-  if (currentMember?.plan_id) {
-    const { data: planData } = await db.from('plans').select('name,weekly_limit,unlimited,is_active').eq('id', currentMember.plan_id).maybeSingle();
+  if (member.plan_id) {
+    const { data: planData } = await db.from('plans').select('name,weekly_limit,unlimited,is_active').eq('id', member.plan_id).maybeSingle();
     const plan = planData as Plan | null;
     if (plan?.is_active === false) return NextResponse.json({ ok: false, message: '現在のプランは無効です。予約をご希望の場合はスタッフにご連絡ください。' }, { status: 403 });
     if (plan && plan.unlimited !== true && typeof plan.weekly_limit === 'number') {
