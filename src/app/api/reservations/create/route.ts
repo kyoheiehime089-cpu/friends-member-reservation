@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { sendMail } from '@/lib/mail';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,8 +7,6 @@ export const dynamic = 'force-dynamic';
 const TZ = 'Asia/Tokyo';
 const MAX_FUTURE_BOOKINGS = 2;
 const dateParts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: TZ });
-const dateLabel = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short', timeZone: TZ });
-const timeLabel = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TZ });
 
 type Slot = { id: string; store_id: string | null; menu_id: string | null; starts_at: string; ends_at: string | null; capacity: number; is_open: boolean | null };
 type Reservation = { id: string; reservation_slot_id: string | null };
@@ -30,14 +27,6 @@ function dayKey(value: Date | string) {
   return `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
 }
 
-function dayRange(value: Date | string) {
-  const p = parts(value);
-  return {
-    start: new Date(Date.UTC(p.y, p.m - 1, p.d, -9, 0, 0, 0)),
-    end: new Date(Date.UTC(p.y, p.m - 1, p.d + 1, -9, 0, 0, 0))
-  };
-}
-
 function weekRange(value: Date | string) {
   const p = parts(value);
   const weekday = new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay();
@@ -53,20 +42,10 @@ function deadline(value: Date | string) {
   return new Date(Date.UTC(p.y, p.m - 1, p.d - 1, 13, 0, 0, 0));
 }
 
-function makeMail(name: string, menu: string, slot: Slot) {
-  const start = new Date(slot.starts_at);
-  const end = slot.ends_at ? new Date(slot.ends_at) : null;
-  return `${name} 様\n\nご予約ありがとうございます。\n以下の内容で予約を受け付けました。\n\n【店舗】\nfriends 行徳\n\n【メニュー】\n${menu}\n\n【予約日時】\n${dateLabel.format(start)} ${timeLabel.format(start)}〜${end ? timeLabel.format(end) : ''}\n\n【予約・キャンセル締切】\n前日22:00まで\n\n予約内容は予約一覧からご確認ください。`;
-}
-
-function mailError(result: { message?: string; providerResponse?: unknown }) {
-  const response = result.providerResponse;
-  if (response && typeof response === 'object') {
-    const map = response as Record<string, unknown>;
-    const message = map.message ?? map.error ?? map.name;
-    if (typeof message === 'string' && message) return message;
-  }
-  return result.message ?? null;
+function isStillActiveFuture(slot: { starts_at?: string | null; ends_at?: string | null }) {
+  const now = new Date();
+  const endOrStart = slot.ends_at || slot.starts_at;
+  return Boolean(endOrStart && new Date(endOrStart) > now);
 }
 
 export async function POST(request: Request) {
@@ -111,16 +90,16 @@ export async function POST(request: Request) {
   const reservations = (allReservations ?? []) as Reservation[];
   const existingSlotIds = Array.from(new Set(reservations.map((r) => r.reservation_slot_id).filter(Boolean))) as string[];
 
-  let existingSlots: { id: string; starts_at: string | null }[] = [];
+  let existingSlots: { id: string; starts_at: string | null; ends_at: string | null }[] = [];
   if (existingSlotIds.length > 0) {
-    const { data } = await db.from('reservation_slots').select('id,starts_at').in('id', existingSlotIds);
-    existingSlots = (data ?? []) as { id: string; starts_at: string | null }[];
+    const { data } = await db.from('reservation_slots').select('id,starts_at,ends_at').in('id', existingSlotIds);
+    existingSlots = (data ?? []) as { id: string; starts_at: string | null; ends_at: string | null }[];
   }
 
   if (existingSlots.some((s) => s.id === slot.id)) return NextResponse.json({ ok: false, message: 'この枠はすでに予約済みです。予約一覧をご確認ください。' }, { status: 409 });
-  if (existingSlots.some((s) => s.starts_at && dayKey(s.starts_at) === dayKey(startsAt))) return NextResponse.json({ ok: false, message: '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。' }, { status: 409 });
+  if (existingSlots.some((s) => s.starts_at && isStillActiveFuture(s) && dayKey(s.starts_at) === dayKey(startsAt))) return NextResponse.json({ ok: false, message: '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。' }, { status: 409 });
 
-  const activeFutureCount = existingSlots.filter((s) => s.starts_at && new Date(s.starts_at) > new Date()).length;
+  const activeFutureCount = existingSlots.filter(isStillActiveFuture).length;
   if (activeFutureCount >= MAX_FUTURE_BOOKINGS) {
     return NextResponse.json({ ok: false, message: `同時に保持できる予約は最大${MAX_FUTURE_BOOKINGS}枠までです。予約一覧からキャンセル後に予約してください。` }, { status: 409 });
   }
@@ -143,29 +122,5 @@ export async function POST(request: Request) {
   const { data: created, error: createError } = await userClient.from('reservations').insert({ reservation_slot_id: slot.id, member_id: user.id, status: 'booked', created_by: user.id }).select('id,member_id').single();
   if (createError || !created) return NextResponse.json({ ok: false, message: `予約処理でエラーが発生しました: ${createError?.message ?? '保存に失敗しました。'}` }, { status: 400 });
 
-  let menuName = '予約枠';
-  if (slot.menu_id) {
-    const { data: menu } = await db.from('menus').select('name').eq('id', slot.menu_id).maybeSingle();
-    menuName = (menu as { name?: string } | null)?.name ?? menuName;
-  }
-
-  const subject = 'friends ご予約完了のお知らせ';
-  const text = makeMail(name, menuName, slot);
-  const memberMailResult = await sendMail({ to: email, subject, body: text, from: process.env.MAIL_FROM_FRIENDS });
-  const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL?.trim();
-  const adminMailResult = adminEmail ? await sendMail({ to: adminEmail, subject: `【管理者通知】${subject}`, body: `${text}\n\n会員ID: ${user.id}\n予約ID: ${created.id}`, from: process.env.MAIL_FROM_FRIENDS }) : null;
-
-  await db.from('mail_logs').insert([
-    { reservation_id: created.id, to_email: memberMailResult.payload.to, subject, status: memberMailResult.ok ? 'sent' : memberMailResult.skipped ? 'skipped' : 'failed', provider_response: memberMailResult },
-    ...(adminMailResult ? [{ reservation_id: created.id, to_email: adminMailResult.payload.to, subject: `【管理者通知】${subject}`, status: adminMailResult.ok ? 'sent' : adminMailResult.skipped ? 'skipped' : 'failed', provider_response: adminMailResult }] : [])
-  ]);
-
-  return NextResponse.json({
-    ok: true,
-    reservationId: created.id,
-    memberMail: memberMailResult.ok ? 'sent' : memberMailResult.skipped ? 'skipped' : 'failed',
-    memberMailError: memberMailResult.ok ? null : mailError(memberMailResult),
-    adminMail: adminMailResult ? adminMailResult.ok ? 'sent' : adminMailResult.skipped ? 'skipped' : 'failed' : 'skipped',
-    adminMailError: adminMailResult && !adminMailResult.ok ? mailError(adminMailResult) : null
-  });
+  return NextResponse.json({ ok: true, reservationId: created.id, memberMail: 'disabled', adminMail: 'disabled' });
 }
