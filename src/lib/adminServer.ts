@@ -24,6 +24,10 @@ export function createServiceClient(supabaseUrl: string, serviceKey: string) {
   });
 }
 
+function normalizeEmail(value?: string | null) {
+  return value?.trim().toLowerCase() ?? '';
+}
+
 export async function requireAdmin(request: Request) {
   const config = getAdminConfig();
   if (!config) {
@@ -41,20 +45,41 @@ export async function requireAdmin(request: Request) {
     return { ok: false as const, status: 401, message: 'ログイン情報を確認できません。', config, adminId: null };
   }
 
+  const userId = userData.user.id;
+  const userEmail = normalizeEmail(userData.user.email);
+  const configuredAdminEmail = normalizeEmail(process.env.ADMIN_NOTIFICATION_EMAIL);
+
+  if (configuredAdminEmail && userEmail === configuredAdminEmail) {
+    return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
+  }
+
   const serviceClient = createServiceClient(config.supabaseUrl, config.serviceKey);
-  const { data: adminRow, error: adminError } = await serviceClient
+
+  const { data: adminById, error: idError } = await serviceClient
     .from('admin_users')
     .select('id')
-    .eq('id', userData.user.id)
+    .eq('id', userId)
     .maybeSingle();
 
-  if (adminError) {
-    return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${adminError.message}`, config, adminId: null };
+  if (idError) {
+    return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${idError.message}`, config, adminId: null };
   }
 
-  if (!adminRow) {
-    return { ok: false as const, status: 403, message: '管理者権限がありません。', config, adminId: null };
+  if (adminById) {
+    return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
   }
 
-  return { ok: true as const, status: 200, message: 'OK', config, adminId: userData.user.id };
+  if (userEmail) {
+    const { data: adminByEmail, error: emailError } = await serviceClient
+      .from('admin_users')
+      .select('id')
+      .eq('email', userEmail)
+      .maybeSingle();
+
+    if (!emailError && adminByEmail) {
+      return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
+    }
+  }
+
+  return { ok: false as const, status: 403, message: '管理者権限がありません。管理者用メールアドレスでサインインしてください。', config, adminId: null };
 }
