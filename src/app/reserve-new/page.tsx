@@ -79,6 +79,12 @@ export default function ReserveNewPage() {
         const { data: ownRows } = await client.from('reservations').select('reservation_slot_id').eq('member_id', currentUserId).in('reservation_slot_id', slotIds).eq('status', 'booked');
         ((ownRows ?? []) as OwnRow[]).forEach((row) => ownBooked.add(row.reservation_slot_id));
 
+        typedSlots.forEach((slot) => {
+          if (ownBooked.has(slot.id)) {
+            sameDayBookedDates.add(keyFmt.format(new Date(slot.starts_at)));
+          }
+        });
+
         const { data: allOwnRows } = await client.from('reservations').select('reservation_slot_id').eq('member_id', currentUserId).eq('status', 'booked');
         const allOwnSlotIds = Array.from(new Set(((allOwnRows ?? []) as OwnBookedWithSlotRow[]).map((row) => row.reservation_slot_id).filter(Boolean))) as string[];
         if (allOwnSlotIds.length > 0) {
