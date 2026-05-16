@@ -135,6 +135,10 @@ function createDbClient(supabaseUrl: string, supabaseAnonKey: string, serviceKey
   return createUserClient(supabaseUrl, supabaseAnonKey, accessToken);
 }
 
+function isUuid(value: string | null | undefined): value is string {
+  return typeof value === 'string' && uuidPattern.test(value);
+}
+
 function getJstDateParts(value: Date | string): JstDateParts {
   const date = typeof value === 'string' ? new Date(value) : value;
   const parts = jstDatePartsFormatter.formatToParts(date);
@@ -280,7 +284,7 @@ async function loadBookedSlotsForMember(dbClient: SupabaseClient, userId: string
   const slotIds = Array.from(new Set(
     reservations
       .map((reservation) => reservation.reservation_slot_id)
-      .filter((slotId): slotId is string => Boolean(slotId) && uuidPattern.test(slotId))
+      .filter(isUuid)
   ));
 
   if (slotIds.length === 0) {
