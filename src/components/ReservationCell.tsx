@@ -1,6 +1,6 @@
 import type { ReservationGridSlot } from '@/components/ReservationGrid';
 
-type ReservationCellStatus = 'available' | 'booked' | 'full' | 'past' | 'closed' | 'empty';
+type ReservationCellStatus = 'available' | 'booked' | 'sameDayBlocked' | 'full' | 'past' | 'closed' | 'empty';
 
 type ReservationCellProps = {
   slot: ReservationGridSlot | null;
@@ -25,6 +25,10 @@ function getCellStatus(slot: ReservationGridSlot | null): ReservationCellStatus 
     return 'booked';
   }
 
+  if (slot.isBlockedBySameDayBooking) {
+    return 'sameDayBlocked';
+  }
+
   if (slot.remainingSeats <= 0) {
     return 'full';
   }
@@ -38,7 +42,6 @@ export function ReservationCell({ slot, isSubmitting, onReserve }: ReservationCe
   if (!slot) {
     return (
       <div className="flex min-h-[92px] min-w-[132px] flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-2 text-center text-sm font-bold text-gray-400">
-        休み
       </div>
     );
   }
@@ -63,6 +66,7 @@ export function ReservationCell({ slot, isSubmitting, onReserve }: ReservationCe
 
   const statusStyles: Record<Exclude<ReservationCellStatus, 'available'>, string> = {
     booked: 'border-green-200 bg-green-50 text-green-800',
+    sameDayBlocked: 'border-gray-200 bg-gray-50 text-gray-500',
     full: 'border-red-100 bg-red-50 text-red-700',
     past: 'border-gray-200 bg-gray-100 text-gray-500',
     closed: 'border-gray-200 bg-gray-50 text-gray-500',
@@ -71,16 +75,17 @@ export function ReservationCell({ slot, isSubmitting, onReserve }: ReservationCe
 
   const statusLabel: Record<Exclude<ReservationCellStatus, 'available'>, string> = {
     booked: '予約済み',
+    sameDayBlocked: '同日予約済み',
     full: '満席',
     past: '受付終了',
     closed: '受付なし',
-    empty: '休み'
+    empty: ''
   };
 
   return (
     <div className={`flex min-h-[92px] min-w-[132px] flex-col items-center justify-center rounded-2xl border p-2 text-center ${statusStyles[status]}`}>
       <p className="text-sm font-black">{statusLabel[status]}</p>
-      <p className="mt-2 text-xs font-bold">{capacityLabel}</p>
+      {status !== 'empty' && <p className="mt-2 text-xs font-bold">{capacityLabel}</p>}
     </div>
   );
 }
