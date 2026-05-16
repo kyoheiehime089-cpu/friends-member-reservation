@@ -1,3 +1,7 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+input[placeholder="初期パスワード 6文字以上"] {
+  display: none;
+}
