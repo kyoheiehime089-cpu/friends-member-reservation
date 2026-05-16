@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { allowedMemberStatuses, createServiceClient, requireAdmin, uuidPattern } from '@/lib/adminServer';
-import { createInitialLoginCode, sendMemberLoginGuide } from '@/lib/memberInviteMail';
+import { createInitialLoginCode } from '@/lib/memberInviteMail';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,6 +11,20 @@ type InviteBody = {
   planId?: string | null;
   status?: string;
 };
+
+function buildLineMessage(params: { fullName: string; email: string; loginCode: string }) {
+  return `${params.fullName}様
+
+予約システムのログイン情報です。
+
+【ログインID】
+${params.email}
+
+【初期パスワード】
+${params.loginCode}
+
+Lステップの予約ボタンから予約システムを開き、上記のログインIDと初期パスワードでログインしてください。`;
+}
 
 async function getDefaultStoreId(serviceClient: ReturnType<typeof createServiceClient>) {
   const { data, error } = await serviceClient.from('stores').select('id').order('created_at', { ascending: true }).limit(1);
@@ -24,40 +38,6 @@ async function assertPlanExists(serviceClient: ReturnType<typeof createServiceCl
   const { data: plan, error } = await serviceClient.from('plans').select('id').eq('id', planId).maybeSingle();
   if (error) throw new Error(`プラン確認に失敗しました: ${error.message}`);
   if (!plan) throw new Error('指定されたプランが見つかりません。');
-}
-
-async function sendMemberResetGuide(params: { to: string; link: string }) {
-  const apiKey = process.env.MAIL_API_KEY?.trim();
-  const from = process.env.MAIL_FROM_FRIENDS?.trim() || 'onboarding@resend.dev';
-  if (!apiKey) return { ok: false, message: 'MAIL_API_KEY が未設定です。' };
-
-  const text = `friends予約システムのログイン再設定メールです。
-
-下記リンクからログイン情報を再設定してください。
-
-${params.link}
-
-リンクの有効期限が切れた場合は、スタッフへ再送をご依頼ください。
-
-friends`;
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from,
-      to: params.to,
-      subject: '【friends】予約システム ログイン再設定のお知らせ',
-      text
-    })
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    return { ok: false, message: detail || `メール送信に失敗しました。status=${response.status}` };
-  }
-
-  return { ok: true, message: 'ログイン再設定メールを送信しました。' };
 }
 
 export async function POST(request: Request) {
@@ -92,23 +72,34 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (existing) {
-    await serviceClient
-      .from('members')
-      .update({ full_name: fullName, status, plan_id: planId, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-
-    const { data: resetData, error: resetError } = await serviceClient.auth.admin.generateLink({
-      type: 'recovery',
-      email,
-      options: { redirectTo: 'https://friends-member-reservation.vercel.app/login' }
+    const { error: authUpdateError } = await serviceClient.auth.admin.updateUserById(existing.id, {
+      password: loginCode,
+      user_metadata: { full_name: fullName, name: fullName }
     });
 
-    if (resetError || !resetData.properties?.action_link) {
-      return NextResponse.json({ ok: false, message: `ログイン再設定リンクの作成に失敗しました: ${resetError?.message ?? 'link not created'}` }, { status: 400 });
+    if (authUpdateError) {
+      return NextResponse.json({ ok: false, message: `ログイン情報の再発行に失敗しました: ${authUpdateError.message}` }, { status: 400 });
     }
 
-    const mail = await sendMemberResetGuide({ to: email, link: resetData.properties.action_link });
-    return NextResponse.json({ ok: true, existing: true, member: existing, mail });
+    const { data: updatedMember, error: memberUpdateError } = await serviceClient
+      .from('members')
+      .update({ full_name: fullName, status, plan_id: planId, updated_at: new Date().toISOString() })
+      .eq('id', existing.id)
+      .select('id,full_name,email,status,plan_id')
+      .single();
+
+    if (memberUpdateError) {
+      return NextResponse.json({ ok: false, message: `会員情報の更新に失敗しました: ${memberUpdateError.message}` }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      existing: true,
+      member: updatedMember,
+      loginId: email,
+      initialLoginCode: loginCode,
+      lineMessage: buildLineMessage({ fullName, email, loginCode })
+    });
   }
 
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
@@ -139,6 +130,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: `会員情報の作成に失敗しました: ${memberError.message}` }, { status: 400 });
   }
 
-  const mail = await sendMemberLoginGuide({ to: email, fullName, loginCode });
-  return NextResponse.json({ ok: true, existing: false, member, mail, temporaryLoginCode: mail.ok ? null : loginCode });
+  return NextResponse.json({
+    ok: true,
+    existing: false,
+    member,
+    loginId: email,
+    initialLoginCode: loginCode,
+    lineMessage: buildLineMessage({ fullName, email, loginCode })
+  });
 }
