@@ -76,7 +76,7 @@ function bookingSuccessMessage(result: CreateResponse) {
     const detail = result.memberMailError ? `\n\n原因: ${result.memberMailError}` : '';
     return `予約は完了しましたが、メール設定不足のため予約完了メールはスキップされました。${detail}`;
   }
-  return '予約が完了しました。予約一覧に移動して内容を確認します。';
+  return '予約が完了しました。予約一覧に移動します。';
 }
 
 function toGridSlot(slot: SlotRow, bookedCount: number, bookedByCurrentUser: boolean, sameDayBookedDates: Set<string>): ReservationGridSlot {
@@ -238,7 +238,7 @@ export default function ReservePage() {
       return;
     }
     setSubmittingSlotId(slotId);
-    setFeedback({ kind: 'info', text: '予約を保存しています。画面を閉じずにお待ちください。' });
+    setFeedback({ kind: 'info', text: '予約を保存しています。' });
     const { data: sessionData } = await client.auth.getSession();
     const token = sessionData.session?.access_token;
     if (!token) {
@@ -262,7 +262,7 @@ export default function ReservePage() {
       }
       show('success', bookingSuccessMessage(result));
       setSubmittingSlotId(null);
-      window.setTimeout(() => { window.location.href = '/my-reservations'; }, 2200);
+      window.setTimeout(() => { window.location.href = '/my-reservations'; }, 700);
     } catch (error) {
       show('error', friendly(error instanceof Error ? error.message : '通信エラーが発生しました。'));
       setSubmittingSlotId(null);
@@ -312,14 +312,14 @@ export default function ReservePage() {
                     key={menu.id}
                     type="button"
                     onClick={() => selectMenu(menu.id)}
-                    className="flex w-full items-center justify-between rounded-3xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-yellow-300 hover:bg-yellow-50"
+                    className="flex w-full items-center justify-between gap-4 rounded-3xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-yellow-300 hover:bg-yellow-50"
                   >
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className="text-2xl font-black text-gray-950">{menu.name}</p>
                       <p className="mt-1 text-sm font-bold text-gray-500">定員目安 {menu.capacity}名</p>
                       {menu.description && <p className="mt-2 text-xs font-semibold text-gray-500">{menu.description}</p>}
                     </div>
-                    <span className="rounded-full bg-yellow-400 px-4 py-2 text-sm font-black text-gray-950">選択</span>
+                    <span className="flex-shrink-0 whitespace-nowrap rounded-full bg-yellow-400 px-4 py-2 text-center text-sm font-black text-gray-950">選択</span>
                   </button>
                 ))}
                 {!loading && menus.length === 0 && <div className="rounded-2xl bg-gray-50 p-5 text-center text-sm font-bold text-gray-600">選択できるメニューがありません。</div>}
