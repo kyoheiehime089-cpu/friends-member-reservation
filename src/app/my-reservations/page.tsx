@@ -64,37 +64,27 @@ const dateTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
 });
 
 function formatDate(value?: string | null) {
-  if (!value) {
-    return '日時未設定';
-  }
+  if (!value) return '日時未設定';
   return dateFormatter.format(new Date(value));
 }
 
 function formatWeekday(value?: string | null) {
-  if (!value) {
-    return '';
-  }
+  if (!value) return '';
   return weekdayFormatter.format(new Date(value));
 }
 
 function formatTime(value?: string | null) {
-  if (!value) {
-    return '';
-  }
+  if (!value) return '';
   return timeFormatter.format(new Date(value));
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) {
-    return '記録なし';
-  }
+  if (!value) return '記録なし';
   return dateTimeFormatter.format(new Date(value));
 }
 
 function getStatusLabel(status?: string | null) {
   switch (status) {
-    case 'cancelled':
-      return 'キャンセル済み';
     case 'attended':
       return '来店済み';
     case 'no_show':
@@ -134,6 +124,7 @@ export default function MyReservationsPage() {
       .from('reservations')
       .select('id,reservation_slot_id,status,created_at')
       .eq('member_id', userData.user.id)
+      .eq('status', 'booked')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -213,18 +204,16 @@ export default function MyReservationsPage() {
 
   const handleCancel = async (reservationId: string, cancelable: boolean) => {
     if (!cancelable) {
-      setMessage('すでにキャンセル済みです。');
+      setMessage('変更できない予約です。');
       return;
     }
 
     const confirmed = window.confirm('この予約をキャンセルしますか？');
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     const client = getSupabaseClient();
     if (!client) {
-      setMessage('Supabase環境変数を設定してください。現在はデモ表示のためキャンセルは保存されません。');
+      setMessage('Supabase環境変数を設定してください。');
       return;
     }
 
@@ -248,7 +237,8 @@ export default function MyReservationsPage() {
       return;
     }
 
-    setMessage('キャンセルしました。空き枠の残席にも反映されます。');
+    setReservations((current) => current.filter((reservation) => reservation.id !== reservationId));
+    setMessage('キャンセルしました。予約一覧から削除しました。');
     setCancellingId(null);
     await loadReservations();
   };
@@ -259,11 +249,11 @@ export default function MyReservationsPage() {
         <SupabaseNotice />
         <div>
           <h1 className="text-3xl font-black">自分の予約一覧</h1>
-          <p className="mt-2 text-gray-600">予約内容の確認とキャンセルができます。</p>
+          <p className="mt-2 text-gray-600">予約中の内容確認とキャンセルができます。</p>
         </div>
         {message && <div className="rounded-2xl bg-yellow-100 p-4 font-bold text-yellow-900">{message}</div>}
         {loading && <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">読み込み中です。</div>}
-        {!loading && displayReservations.length === 0 && <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">予約はまだありません。</div>}
+        {!loading && displayReservations.length === 0 && <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">予約中の予約はありません。</div>}
         <div className="grid gap-3">
           {displayReservations.map((reservation) => (
             <div key={reservation.id} className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -272,7 +262,6 @@ export default function MyReservationsPage() {
                   <p className="text-xl font-black">{reservation.date}（{reservation.weekday}） {reservation.startTime}〜{reservation.endTime}</p>
                   <p className="font-semibold text-gray-600">{reservation.menu} / {reservation.status}</p>
                   <p className="mt-1 text-xs font-bold text-gray-400">予約作成: {reservation.createdAt}</p>
-                  {!reservation.cancelable && <p className="mt-2 text-sm font-bold text-red-600">キャンセル済み、または変更できない予約です。</p>}
                 </div>
                 <button
                   type="button"
