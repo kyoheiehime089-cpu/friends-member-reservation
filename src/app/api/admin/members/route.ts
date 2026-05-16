@@ -1,72 +1,37 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { allowedMemberStatuses, createServiceClient, requireAdmin, uuidPattern } from '@/lib/adminServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const allowedStatuses = ['有効', '休会中', '退会予定', '退会済み', '停止中', '未払い'];
 
 type PatchBody = {
   memberId?: string;
   planId?: string | null;
   status?: string;
+  fullName?: string;
+  email?: string;
 };
 
-function getConfig() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!supabaseUrl || !anonKey || !serviceKey) return null;
-  return { supabaseUrl, anonKey, serviceKey };
+type CreateBody = {
+  fullName?: string;
+  email?: string;
+  password?: string;
+  planId?: string | null;
+  status?: string;
+};
+
+async function getDefaultStoreId(serviceClient: ReturnType<typeof createServiceClient>) {
+  const { data, error } = await serviceClient.from('stores').select('id').order('created_at', { ascending: true }).limit(1);
+  if (error) throw new Error(`店舗情報の取得に失敗しました: ${error.message}`);
+  return data?.[0]?.id ?? null;
 }
 
-function createUserClient(supabaseUrl: string, anonKey: string, token: string) {
-  return createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
-}
-
-function createServiceClient(supabaseUrl: string, serviceKey: string) {
-  return createClient(supabaseUrl, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
-}
-
-async function requireAdmin(request: Request) {
-  const config = getConfig();
-  if (!config) {
-    return { ok: false as const, status: 500, message: 'Supabase環境変数が未設定です。', config: null, adminId: null };
-  }
-
-  const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
-  if (!token) {
-    return { ok: false as const, status: 401, message: 'ログイン情報が確認できません。', config, adminId: null };
-  }
-
-  const userClient = createUserClient(config.supabaseUrl, config.anonKey, token);
-  const { data: userData, error: userError } = await userClient.auth.getUser(token);
-  if (userError || !userData.user) {
-    return { ok: false as const, status: 401, message: 'ログイン情報を確認できません。', config, adminId: null };
-  }
-
-  const serviceClient = createServiceClient(config.supabaseUrl, config.serviceKey);
-  const { data: adminRow, error: adminError } = await serviceClient
-    .from('admin_users')
-    .select('id')
-    .eq('id', userData.user.id)
-    .maybeSingle();
-
-  if (adminError) {
-    return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${adminError.message}`, config, adminId: null };
-  }
-
-  if (!adminRow) {
-    return { ok: false as const, status: 403, message: '管理者権限がありません。', config, adminId: null };
-  }
-
-  return { ok: true as const, status: 200, message: 'OK', config, adminId: userData.user.id };
+async function assertPlanExists(serviceClient: ReturnType<typeof createServiceClient>, planId: string | null) {
+  if (!planId) return;
+  if (!uuidPattern.test(planId)) throw new Error('planId が不正です。');
+  const { data: plan, error: planError } = await serviceClient.from('plans').select('id').eq('id', planId).maybeSingle();
+  if (planError) throw new Error(`プラン確認に失敗しました: ${planError.message}`);
+  if (!plan) throw new Error('指定されたプランが見つかりません。');
 }
 
 export async function GET(request: Request) {
@@ -99,8 +64,68 @@ export async function GET(request: Request) {
     ok: true,
     members: members ?? [],
     plans: plans ?? [],
-    statuses: allowedStatuses
+    statuses: allowedMemberStatuses
   });
+}
+
+export async function POST(request: Request) {
+  const admin = await requireAdmin(request);
+  if (!admin.ok || !admin.config) {
+    return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
+  }
+
+  const body = await request.json().catch(() => ({})) as CreateBody;
+  const fullName = body.fullName?.trim();
+  const email = body.email?.trim().toLowerCase();
+  const password = body.password?.trim();
+  const planId = typeof body.planId === 'string' && body.planId.trim() ? body.planId.trim() : null;
+  const status = body.status?.trim() || '有効';
+
+  if (!fullName) return NextResponse.json({ ok: false, message: '会員名を入力してください。' }, { status: 400 });
+  if (!email || !email.includes('@')) return NextResponse.json({ ok: false, message: 'メールアドレスを正しく入力してください。' }, { status: 400 });
+  if (!password || password.length < 6) return NextResponse.json({ ok: false, message: '仮パスワードは6文字以上で入力してください。' }, { status: 400 });
+  if (!allowedMemberStatuses.includes(status)) return NextResponse.json({ ok: false, message: 'status が不正です。' }, { status: 400 });
+
+  const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
+
+  try {
+    await assertPlanExists(serviceClient, planId);
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'プラン確認に失敗しました。' }, { status: 400 });
+  }
+
+  const { data: existing } = await serviceClient.from('members').select('id').eq('email', email).maybeSingle();
+  if (existing) return NextResponse.json({ ok: false, message: '同じメールアドレスの会員がすでに存在します。' }, { status: 409 });
+
+  const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name: fullName, name: fullName }
+  });
+
+  if (authError || !authData.user) {
+    return NextResponse.json({ ok: false, message: `ログインユーザーの作成に失敗しました: ${authError?.message ?? '作成できませんでした。'}` }, { status: 400 });
+  }
+
+  let storeId: string | null = null;
+  try {
+    storeId = await getDefaultStoreId(serviceClient);
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : '店舗情報の取得に失敗しました。' }, { status: 400 });
+  }
+
+  const { data: member, error: memberError } = await serviceClient
+    .from('members')
+    .insert({ id: authData.user.id, store_id: storeId, full_name: fullName, email, status, plan_id: planId })
+    .select('id,full_name,email,status,plan_id,created_at,updated_at')
+    .single();
+
+  if (memberError) {
+    return NextResponse.json({ ok: false, message: `会員情報の作成に失敗しました: ${memberError.message}` }, { status: 400 });
+  }
+
+  return NextResponse.json({ ok: true, member });
 }
 
 export async function PATCH(request: Request) {
@@ -113,42 +138,26 @@ export async function PATCH(request: Request) {
   const memberId = body.memberId?.trim();
   const planId = typeof body.planId === 'string' && body.planId.trim() ? body.planId.trim() : null;
   const status = body.status?.trim();
+  const fullName = body.fullName?.trim();
+  const email = body.email?.trim().toLowerCase();
 
-  if (!memberId || !uuidPattern.test(memberId)) {
-    return NextResponse.json({ ok: false, message: 'memberId が不正です。' }, { status: 400 });
-  }
-
-  if (planId && !uuidPattern.test(planId)) {
-    return NextResponse.json({ ok: false, message: 'planId が不正です。' }, { status: 400 });
-  }
-
-  if (status && !allowedStatuses.includes(status)) {
-    return NextResponse.json({ ok: false, message: 'status が不正です。' }, { status: 400 });
-  }
+  if (!memberId || !uuidPattern.test(memberId)) return NextResponse.json({ ok: false, message: 'memberId が不正です。' }, { status: 400 });
+  if (status && !allowedMemberStatuses.includes(status)) return NextResponse.json({ ok: false, message: 'status が不正です。' }, { status: 400 });
+  if (email && !email.includes('@')) return NextResponse.json({ ok: false, message: 'メールアドレスが不正です。' }, { status: 400 });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
 
-  if (planId) {
-    const { data: plan, error: planError } = await serviceClient
-      .from('plans')
-      .select('id')
-      .eq('id', planId)
-      .maybeSingle();
-
-    if (planError) {
-      return NextResponse.json({ ok: false, message: `プラン確認に失敗しました: ${planError.message}` }, { status: 400 });
-    }
-
-    if (!plan) {
-      return NextResponse.json({ ok: false, message: '指定されたプランが見つかりません。' }, { status: 404 });
-    }
+  try {
+    await assertPlanExists(serviceClient, planId);
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'プラン確認に失敗しました。' }, { status: 400 });
   }
 
-  const updatePayload: { plan_id?: string | null; status?: string; updated_at: string } = {
-    updated_at: new Date().toISOString()
-  };
+  const updatePayload: { plan_id?: string | null; status?: string; full_name?: string; email?: string; updated_at: string } = { updated_at: new Date().toISOString() };
   updatePayload.plan_id = planId;
   if (status) updatePayload.status = status;
+  if (fullName) updatePayload.full_name = fullName;
+  if (email) updatePayload.email = email;
 
   const { data, error } = await serviceClient
     .from('members')
