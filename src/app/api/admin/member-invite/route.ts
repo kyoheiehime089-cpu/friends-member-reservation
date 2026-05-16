@@ -23,7 +23,7 @@ ${params.email}
 【初期パスワード】
 ${params.loginCode}
 
-Lステップの予約ボタンから予約システムを開き、上記のログインIDと初期パスワードでログインしてください。`;
+LINEのリッチメニューから予約画面を開き、上記のログインIDと初期パスワードでログインしてください。`;
 }
 
 async function getDefaultStoreId(serviceClient: ReturnType<typeof createServiceClient>) {
@@ -92,14 +92,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, message: `会員情報の更新に失敗しました: ${memberUpdateError.message}` }, { status: 400 });
     }
 
-    return NextResponse.json({
-      ok: true,
-      existing: true,
-      member: updatedMember,
-      loginId: email,
-      initialLoginCode: loginCode,
-      lineMessage: buildLineMessage({ fullName, email, loginCode })
-    });
+    return NextResponse.json({ ok: true, existing: true, member: updatedMember, loginId: email, initialLoginCode: loginCode, lineMessage: buildLineMessage({ fullName, email, loginCode }) });
   }
 
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
@@ -130,12 +123,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: `会員情報の作成に失敗しました: ${memberError.message}` }, { status: 400 });
   }
 
-  return NextResponse.json({
-    ok: true,
-    existing: false,
-    member,
-    loginId: email,
-    initialLoginCode: loginCode,
-    lineMessage: buildLineMessage({ fullName, email, loginCode })
-  });
+  return NextResponse.json({ ok: true, existing: false, member, loginId: email, initialLoginCode: loginCode, lineMessage: buildLineMessage({ fullName, email, loginCode }) });
 }
