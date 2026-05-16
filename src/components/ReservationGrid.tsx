@@ -12,6 +12,7 @@ export type ReservationGridSlot = {
   isOpen: boolean;
   isPast: boolean;
   isBookedByCurrentUser: boolean;
+  isBlockedBySameDayBooking?: boolean;
 };
 
 export type ReservationGridDate = {
