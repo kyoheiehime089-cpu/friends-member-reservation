@@ -9,10 +9,24 @@ type ReservationRow = {
   id: string;
   member_id: string | null;
   status: string | null;
+  reservation_slot_id: string | null;
+};
+
+type SlotRow = {
+  id: string;
+  starts_at: string | null;
 };
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const gridTimeZone = 'Asia/Tokyo';
+const jstDatePartsFormatter = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: gridTimeZone
+});
 
 function getConfig() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -36,6 +50,19 @@ function dbClient(supabaseUrl: string, anonKey: string, serviceKey: string, toke
     });
   }
   return userClient(supabaseUrl, anonKey, token);
+}
+
+function getPreviousDay22JstDeadline(value: Date | string) {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const parts = jstDatePartsFormatter.formatToParts(date);
+  const year = Number(parts.find((part) => part.type === 'year')?.value ?? '0');
+  const month = Number(parts.find((part) => part.type === 'month')?.value ?? '0');
+  const day = Number(parts.find((part) => part.type === 'day')?.value ?? '0');
+  return new Date(Date.UTC(year, month - 1, day - 1, 13, 0, 0, 0));
+}
+
+function hasPassedPreviousDay22Deadline(value: Date | string) {
+  return new Date() >= getPreviousDay22JstDeadline(value);
 }
 
 export async function POST(request: Request) {
@@ -64,7 +91,7 @@ export async function POST(request: Request) {
   const client = dbClient(config.supabaseUrl, config.anonKey, config.serviceKey, token);
   const { data: reservationData, error: reservationError } = await client
     .from('reservations')
-    .select('id,member_id,status')
+    .select('id,member_id,status,reservation_slot_id')
     .eq('id', reservationId)
     .maybeSingle();
 
@@ -79,6 +106,23 @@ export async function POST(request: Request) {
 
   if (reservation.status === 'cancelled') {
     return NextResponse.json({ ok: true, message: 'すでにキャンセル済みです。' });
+  }
+
+  if (reservation.reservation_slot_id) {
+    const { data: slotData, error: slotError } = await client
+      .from('reservation_slots')
+      .select('id,starts_at')
+      .eq('id', reservation.reservation_slot_id)
+      .maybeSingle();
+
+    if (slotError) {
+      return NextResponse.json({ ok: false, message: `予約枠情報の確認に失敗しました: ${slotError.message}` }, { status: 400 });
+    }
+
+    const slot = slotData as SlotRow | null;
+    if (slot?.starts_at && hasPassedPreviousDay22Deadline(slot.starts_at)) {
+      return NextResponse.json({ ok: false, message: 'キャンセル受付は終了しました。キャンセルは前日22:00までです。' }, { status: 400 });
+    }
   }
 
   const { error: updateError } = await client
