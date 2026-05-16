@@ -153,6 +153,13 @@ function getJstDateKey(value: Date | string) {
   return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
 }
 
+function getJstDayRange(value: Date | string) {
+  const { year, month, day } = getJstDateParts(value);
+  const start = new Date(Date.UTC(year, month - 1, day, -9, 0, 0, 0));
+  const end = new Date(Date.UTC(year, month - 1, day + 1, -9, 0, 0, 0));
+  return { start, end };
+}
+
 function getPreviousDay22JstDeadline(value: Date | string) {
   const { year, month, day } = getJstDateParts(value);
   return new Date(Date.UTC(year, month - 1, day - 1, 13, 0, 0, 0));
@@ -174,6 +181,9 @@ function getJstWeekRange(value: Date | string) {
 function friendlyMessage(message: string) {
   if (message.includes('duplicate key') || message.includes('unique') || message.includes('already exists')) {
     return 'この枠はすでに予約済みです。予約一覧をご確認ください。';
+  }
+  if (message.includes('同じ日に予約できるのは1枠まで')) {
+    return '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。';
   }
   if (message.includes('定員') || message.includes('capacity')) {
     return 'この枠は満席になりました。別の枠をお選びください。';
@@ -308,6 +318,41 @@ async function loadBookedSlotsForMember(dbClient: SupabaseClient, userId: string
   };
 }
 
+async function hasBookedSameDay(dbClient: SupabaseClient, params: { userId: string; startsAt: Date; currentSlotId: string }) {
+  const { start, end } = getJstDayRange(params.startsAt);
+  const { data: sameDaySlotRows, error: sameDaySlotError } = await dbClient
+    .from('reservation_slots')
+    .select('id')
+    .gte('starts_at', start.toISOString())
+    .lt('starts_at', end.toISOString());
+
+  if (sameDaySlotError) {
+    return { ok: false, hasBooking: false, errorMessage: sameDaySlotError.message };
+  }
+
+  const sameDaySlotIds = (sameDaySlotRows ?? [])
+    .map((row) => row.id as string)
+    .filter((id) => id !== params.currentSlotId);
+
+  if (sameDaySlotIds.length === 0) {
+    return { ok: true, hasBooking: false, errorMessage: null };
+  }
+
+  const { data: sameDayReservationRows, error: sameDayReservationError } = await dbClient
+    .from('reservations')
+    .select('id')
+    .eq('member_id', params.userId)
+    .eq('status', 'booked')
+    .in('reservation_slot_id', sameDaySlotIds)
+    .limit(1);
+
+  if (sameDayReservationError) {
+    return { ok: false, hasBooking: false, errorMessage: sameDayReservationError.message };
+  }
+
+  return { ok: true, hasBooking: (sameDayReservationRows ?? []).length > 0, errorMessage: null };
+}
+
 function countBookedInSameWeek(bookedSlots: BookedSlotRow[], startsAt: Date) {
   const { start, end } = getJstWeekRange(startsAt);
   return bookedSlots.filter((slot) => {
@@ -383,6 +428,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: 'この枠はすでに予約済みです。予約一覧をご確認ください。' }, { status: 409 });
   }
 
+  const sameDayResult = await hasBookedSameDay(dbClient, {
+    userId: userData.user.id,
+    startsAt,
+    currentSlotId: slot.id
+  });
+
+  if (!sameDayResult.ok) {
+    return NextResponse.json({ ok: false, message: friendlyMessage(sameDayResult.errorMessage ?? '同日予約の確認に失敗しました。') }, { status: 400 });
+  }
+
+  if (sameDayResult.hasBooking) {
+    return NextResponse.json({ ok: false, message: '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。' }, { status: 409 });
+  }
+
   const { data: bookedRows, error: bookedError } = await dbClient
     .from('reservations')
     .select('id')
@@ -420,15 +479,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: friendlyMessage(bookedSlotsResult.errorMessage ?? '予約履歴の確認に失敗しました。') }, { status: 400 });
   }
 
-  const targetDateKey = getJstDateKey(startsAt);
   const bookedSlots = bookedSlotsResult.reservations
     .map((reservation) => reservation.reservation_slot_id ? bookedSlotsResult.slotsById.get(reservation.reservation_slot_id) : null)
     .filter((slotRow): slotRow is BookedSlotRow => Boolean(slotRow?.starts_at));
-
-  const hasSameDayBooking = bookedSlots.some((bookedSlot) => bookedSlot.id !== slot.id && bookedSlot.starts_at && getJstDateKey(bookedSlot.starts_at) === targetDateKey);
-  if (hasSameDayBooking) {
-    return NextResponse.json({ ok: false, message: '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。' }, { status: 409 });
-  }
 
   const { plan, errorMessage: planErrorMessage } = await loadMemberPlan(dbClient, memberResult.member.plan_id);
   if (planErrorMessage) {
