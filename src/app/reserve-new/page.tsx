@@ -10,6 +10,7 @@ type MenuOption = { id: string; name: string; description?: string | null; capac
 type SlotRow = { id: string; starts_at: string; ends_at: string; capacity: number; is_open: boolean };
 type CountRow = { reservation_slot_id: string; booked_count: number };
 type OwnRow = { reservation_slot_id: string };
+type OwnBookedWithSlotRow = { reservation_slot_id: string | null };
 type FeedbackKind = 'success' | 'error' | 'info';
 type DisplayMode = 'threeDays' | 'week';
 type CreateResponse = { ok?: boolean; message?: string; detail?: string };
@@ -27,7 +28,7 @@ function toDate(date: Date): ReservationGridDate { return { dateKey: keyFmt.form
 function buildDates(offset: number, mode: DisplayMode) { const start = addDays(startOfToday(), offset); return Array.from({ length: mode === 'threeDays' ? 3 : 7 }, (_, index) => toDate(addDays(start, index))); }
 function className(kind: FeedbackKind) { if (kind === 'success') return 'border-green-200 bg-green-50 text-green-900'; if (kind === 'error') return 'border-red-200 bg-red-50 text-red-900'; return 'border-yellow-200 bg-yellow-50 text-yellow-900'; }
 function friendly(message: string) { if (message.includes('duplicate') || message.includes('unique')) return 'この枠はすでに予約済みです。予約一覧をご確認ください。'; if (message.includes('満席') || message.includes('定員')) return 'この枠は満席になりました。別の枠をお選びください。'; if (message.includes('row-level security')) return '予約できませんでした。ログイン状態、または会員情報の設定を確認してください。'; return message || '予約処理でエラーが発生しました。'; }
-function toGridSlot(slot: SlotRow, bookedCount: number, bookedByCurrentUser: boolean): ReservationGridSlot { const starts = new Date(slot.starts_at); return { id: slot.id, dateKey: keyFmt.format(starts), dateLabel: dateFmt.format(starts), weekdayLabel: weekFmt.format(starts), timeLabel: timeFmt.format(starts), capacity: slot.capacity, bookedCount, remainingSeats: slot.capacity - bookedCount, isOpen: slot.is_open, isPast: starts <= new Date(), isBookedByCurrentUser: bookedByCurrentUser }; }
+function toGridSlot(slot: SlotRow, bookedCount: number, bookedByCurrentUser: boolean, sameDayBookedDates: Set<string>): ReservationGridSlot { const starts = new Date(slot.starts_at); const dateKey = keyFmt.format(starts); return { id: slot.id, dateKey, dateLabel: dateFmt.format(starts), weekdayLabel: weekFmt.format(starts), timeLabel: timeFmt.format(starts), capacity: slot.capacity, bookedCount, remainingSeats: slot.capacity - bookedCount, isOpen: slot.is_open, isPast: starts <= new Date(), isBookedByCurrentUser: bookedByCurrentUser, isBlockedBySameDayBooking: !bookedByCurrentUser && sameDayBookedDates.has(dateKey) }; }
 
 export default function ReserveNewPage() {
   const [menus, setMenus] = useState<MenuOption[]>([]);
@@ -69,6 +70,7 @@ export default function ReserveNewPage() {
     const slotIds = typedSlots.map((slot) => slot.id);
     const countById = new Map<string, number>();
     const ownBooked = new Set<string>();
+    const sameDayBookedDates = new Set<string>();
     if (slotIds.length > 0) {
       const { data: countRows, error: countError } = await client.rpc('get_slot_booking_counts', { slot_ids: slotIds });
       if (countError) { show('error', `予約数集計のSupabase設定が未適用です: ${countError.message}`); setSlots([]); setLoading(false); return; }
@@ -76,9 +78,16 @@ export default function ReserveNewPage() {
       if (currentUserId) {
         const { data: ownRows } = await client.from('reservations').select('reservation_slot_id').eq('member_id', currentUserId).in('reservation_slot_id', slotIds).eq('status', 'booked');
         ((ownRows ?? []) as OwnRow[]).forEach((row) => ownBooked.add(row.reservation_slot_id));
+
+        const { data: allOwnRows } = await client.from('reservations').select('reservation_slot_id').eq('member_id', currentUserId).eq('status', 'booked');
+        const allOwnSlotIds = Array.from(new Set(((allOwnRows ?? []) as OwnBookedWithSlotRow[]).map((row) => row.reservation_slot_id).filter(Boolean))) as string[];
+        if (allOwnSlotIds.length > 0) {
+          const { data: ownSlotRows } = await client.from('reservation_slots').select('id,starts_at').in('id', allOwnSlotIds);
+          ((ownSlotRows ?? []) as Pick<SlotRow, 'id' | 'starts_at'>[]).forEach((ownSlot) => sameDayBookedDates.add(keyFmt.format(new Date(ownSlot.starts_at))));
+        }
       }
     }
-    setSlots(typedSlots.map((slot) => toGridSlot(slot, countById.get(slot.id) ?? 0, ownBooked.has(slot.id))));
+    setSlots(typedSlots.map((slot) => toGridSlot(slot, countById.get(slot.id) ?? 0, ownBooked.has(slot.id), sameDayBookedDates)));
     setLoading(false);
   }, [mode, offset, selectedMenuId, show]);
 
@@ -87,7 +96,7 @@ export default function ReserveNewPage() {
   const reserve = async (slotId: string) => {
     if (submittingSlotId) return;
     const target = slots.find((slot) => slot.id === slotId);
-    if (!target || target.isPast || !target.isOpen || target.remainingSeats <= 0 || target.isBookedByCurrentUser) { show('error', 'この枠は現在予約できません。画面を更新して最新の状態を確認してください。'); return; }
+    if (!target || target.isPast || !target.isOpen || target.remainingSeats <= 0 || target.isBookedByCurrentUser || target.isBlockedBySameDayBooking) { show('error', target?.isBlockedBySameDayBooking ? '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。' : 'この枠は現在予約できません。画面を更新して最新の状態を確認してください。'); return; }
     const client = getSupabaseClient();
     if (!client) { show('error', 'Supabase環境変数を設定してください。'); return; }
     setSubmittingSlotId(slotId);
@@ -119,7 +128,7 @@ export default function ReserveNewPage() {
         {feedback && <div className={`rounded-2xl border p-4 font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}
         <section className="grid gap-3 md:grid-cols-3">{menus.map((menu) => <button key={menu.id} type="button" onClick={() => setSelectedMenuId(menu.id)} className={`rounded-2xl border p-5 text-left shadow-sm ${selectedMenuId === menu.id ? 'border-yellow-400 bg-yellow-100' : 'border-gray-200 bg-white'}`}><p className="text-lg font-black">{menu.name}</p><p className="mt-1 text-sm text-gray-600">定員目安 {menu.capacity}名</p>{menu.description && <p className="mt-2 text-xs font-semibold text-gray-500">{menu.description}</p>}</button>)}</section>
         <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5"><div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="text-2xl font-black">{selectedMenu?.name ?? '予約枠'} の空き枠</h2><p className="mt-1 text-sm text-gray-600">表示期間: {rangeLabel}</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => setOffset((current) => Math.max(0, current - (mode === 'threeDays' ? 3 : 7)))} disabled={offset === 0} className="rounded-full border border-gray-300 px-4 py-2 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40">前へ</button><button type="button" onClick={() => setOffset((current) => current + (mode === 'threeDays' ? 3 : 7))} className="rounded-full border border-gray-900 px-4 py-2 text-sm font-bold">次の{mode === 'threeDays' ? '3日' : '1週間'}</button><button type="button" onClick={() => setDisplayMode('threeDays')} className={`rounded-full px-4 py-2 text-sm font-bold ${mode === 'threeDays' ? 'bg-yellow-400 text-gray-950' : 'border border-gray-300'}`}>3日表示</button><button type="button" onClick={() => setDisplayMode('week')} className={`rounded-full px-4 py-2 text-sm font-bold ${mode === 'week' ? 'bg-yellow-400 text-gray-950' : 'border border-gray-300'}`}>1週間表示</button></div>{loading && <p className="text-sm font-bold text-gray-500">読み込み中です...</p>}</div>{feedback && <div className={`mb-4 rounded-2xl border p-4 font-bold ${className(feedback.kind)}`}>{feedback.text}</div>}{!loading && <ReservationGrid dates={dates} slots={slots} submittingSlotId={submittingSlotId} timeLabels={standardTimes} onReserve={reserve} />}{loading && <div className="rounded-2xl border border-gray-100 bg-gray-50 p-6 font-bold text-gray-600">予約枠を読み込んでいます。</div>}</section>
-        <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5"><h2 className="font-black">表示について</h2><p className="mt-2 text-sm text-gray-700">「予約する」は受付中、「予約済み」はご自身の予約、「満席」は残席なし、「受付終了」は開始済みの枠、「休み」はその時間の予約枠が未作成の状態です。木曜日や休業日でも、管理者が枠を作成すると予約可能として表示されます。</p></section>
+        <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5"><h2 className="font-black">表示について</h2><p className="mt-2 text-sm text-gray-700">「予約する」は受付中、「予約済み」はご自身の予約、「同日予約済み」は同じ日に別の予約があるため予約できない枠、「満席」は残席なし、「受付終了」は開始済みの枠です。予約枠が未作成の時間は空欄です。</p></section>
       </div>
     </AppShell>
   );
