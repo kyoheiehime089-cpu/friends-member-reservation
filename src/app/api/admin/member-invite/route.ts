@@ -26,6 +26,40 @@ async function assertPlanExists(serviceClient: ReturnType<typeof createServiceCl
   if (!plan) throw new Error('指定されたプランが見つかりません。');
 }
 
+async function sendMemberResetGuide(params: { to: string; link: string }) {
+  const apiKey = process.env.MAIL_API_KEY?.trim();
+  const from = process.env.MAIL_FROM_FRIENDS?.trim() || 'onboarding@resend.dev';
+  if (!apiKey) return { ok: false, message: 'MAIL_API_KEY が未設定です。' };
+
+  const text = `friends予約システムのログイン再設定メールです。
+
+下記リンクからログイン情報を再設定してください。
+
+${params.link}
+
+リンクの有効期限が切れた場合は、スタッフへ再送をご依頼ください。
+
+friends`;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from,
+      to: params.to,
+      subject: '【friends】予約システム ログイン再設定のお知らせ',
+      text
+    })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    return { ok: false, message: detail || `メール送信に失敗しました。status=${response.status}` };
+  }
+
+  return { ok: true, message: 'ログイン再設定メールを送信しました。' };
+}
+
 export async function POST(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) {
@@ -51,8 +85,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'プラン確認に失敗しました。' }, { status: 400 });
   }
 
-  const { data: existing } = await serviceClient.from('members').select('id').eq('email', email).maybeSingle();
-  if (existing) return NextResponse.json({ ok: false, message: '同じメールアドレスの会員がすでに存在します。' }, { status: 409 });
+  const { data: existing } = await serviceClient
+    .from('members')
+    .select('id,full_name,email,status,plan_id')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (existing) {
+    await serviceClient
+      .from('members')
+      .update({ full_name: fullName, status, plan_id: planId, updated_at: new Date().toISOString() })
+      .eq('id', existing.id);
+
+    const { data: resetData, error: resetError } = await serviceClient.auth.admin.generateLink({
+      type: 'recovery',
+      email,
+      options: { redirectTo: 'https://friends-member-reservation.vercel.app/login' }
+    });
+
+    if (resetError || !resetData.properties?.action_link) {
+      return NextResponse.json({ ok: false, message: `ログイン再設定リンクの作成に失敗しました: ${resetError?.message ?? 'link not created'}` }, { status: 400 });
+    }
+
+    const mail = await sendMemberResetGuide({ to: email, link: resetData.properties.action_link });
+    return NextResponse.json({ ok: true, existing: true, member: existing, mail });
+  }
 
   const { data: authData, error: authError } = await serviceClient.auth.admin.createUser({
     email,
@@ -83,5 +140,5 @@ export async function POST(request: Request) {
   }
 
   const mail = await sendMemberLoginGuide({ to: email, fullName, loginCode });
-  return NextResponse.json({ ok: true, member, mail, temporaryLoginCode: mail.ok ? null : loginCode });
+  return NextResponse.json({ ok: true, existing: false, member, mail, temporaryLoginCode: mail.ok ? null : loginCode });
 }
