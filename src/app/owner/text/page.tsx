@@ -55,11 +55,21 @@ export default function OwnerTextPage() {
     if (!r.ok || !b.ok) return setNotice(b.message ?? '作成に失敗しました。');
     setText(b.lineMessage ?? '');
     setName(''); setMail(''); setPlanId(''); setStatus('有効');
-    setNotice('作成しました。下の文面をLステップで送ってください。');
+    setNotice('作成しました。下の文面をコピーしてLINEで送ってください。');
+  }
+
+  async function copyText() {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice('文面をコピーしました。LINEでそのまま送れます。');
+    } catch {
+      setNotice('コピーできませんでした。下の文面を長押ししてコピーしてください。');
+    }
   }
 
   return (
-    <AdminPage title="Lステップ用文面" description="会員作成後に送る文面を作成します。">
+    <AdminPage title="LINE送信用文面" description="会員作成後に送るログイン案内文を作成します。">
       <div className="space-y-4">
         <p className="rounded-2xl bg-yellow-50 px-4 py-3 text-sm font-bold text-gray-700">{notice}</p>
         <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -76,7 +86,13 @@ export default function OwnerTextPage() {
             <button type="button" disabled={busy} onClick={() => void submit()} className="rounded-full bg-yellow-400 px-5 py-3 font-black text-gray-950 disabled:opacity-50 md:col-span-2">{busy ? '作成中' : '文面を作成'}</button>
           </div>
         </section>
-        {text && <textarea className="min-h-52 w-full rounded-3xl border border-yellow-200 bg-yellow-50 p-4 text-sm font-bold" value={text} readOnly />}
+        {text && (
+          <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5 shadow-sm">
+            <h2 className="text-xl font-black">LINEで送る文面</h2>
+            <textarea className="mt-4 min-h-52 w-full rounded-2xl border border-yellow-200 bg-white p-4 text-sm font-bold text-gray-800" value={text} readOnly />
+            <button type="button" onClick={() => void copyText()} className="mt-4 w-full rounded-full bg-gray-900 px-5 py-3 font-black text-white">ワンタップでコピー</button>
+          </section>
+        )}
       </div>
     </AdminPage>
   );
