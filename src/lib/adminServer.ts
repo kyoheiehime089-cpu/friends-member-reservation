@@ -41,11 +41,21 @@ export async function requireAdmin(request: Request) {
   const userEmail = normalizeEmail(userData.user.email);
   const serviceClient = createServiceClient(config.supabaseUrl, config.serviceKey);
 
+  const { data: memberById } = await serviceClient.from('members').select('id').eq('id', userId).maybeSingle();
+  if (memberById) {
+    return { ok: false as const, status: 403, message: '会員アカウントでは管理者画面に入れません。管理者専用アカウントでサインインしてください。', config, adminId: null };
+  }
+
   const { data: adminById, error: idError } = await serviceClient.from('admin_users').select('id').eq('id', userId).maybeSingle();
   if (idError) return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${idError.message}`, config, adminId: null };
   if (adminById) return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
 
   if (userEmail) {
+    const { data: memberByEmail } = await serviceClient.from('members').select('id').eq('email', userEmail).maybeSingle();
+    if (memberByEmail) {
+      return { ok: false as const, status: 403, message: '会員アカウントでは管理者画面に入れません。管理者専用アカウントでサインインしてください。', config, adminId: null };
+    }
+
     const { data: adminByEmail, error: emailError } = await serviceClient.from('admin_users').select('id').eq('email', userEmail).maybeSingle();
     if (emailError) return { ok: false as const, status: 500, message: `管理者権限の確認に失敗しました: ${emailError.message}`, config, adminId: null };
     if (adminByEmail) return { ok: true as const, status: 200, message: 'OK', config, adminId: userId };
