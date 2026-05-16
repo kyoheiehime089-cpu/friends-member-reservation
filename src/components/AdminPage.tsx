@@ -55,7 +55,7 @@ export function AdminPage({ title, description, children }: { title: string; des
       const token = data.session?.access_token;
       if (!token) {
         if (mounted) {
-          setMessage('管理者としてログインしてください。');
+          setMessage('管理者としてサインインしてください。');
           setChecking(false);
         }
         return;
@@ -80,7 +80,7 @@ export function AdminPage({ title, description, children }: { title: string; des
         <div className="mx-auto max-w-xl rounded-3xl border border-gray-200 bg-white p-6 text-center shadow-sm">
           <p className="text-xl font-black">{checking ? '確認中' : '管理者画面'}</p>
           <p className="mt-3 font-bold text-gray-600">{message}</p>
-          {!checking && <Link href="/login" className="mt-5 inline-block rounded-full bg-yellow-400 px-6 py-3 font-black text-gray-950">ログイン</Link>}
+          {!checking && <Link href="/owner/signin" className="mt-5 inline-block rounded-full bg-yellow-400 px-6 py-3 font-black text-gray-950">管理者サインイン</Link>}
         </div>
       </OwnerShell>
     );
