@@ -13,7 +13,7 @@ type OwnRow = { reservation_slot_id: string };
 type OwnBookedWithSlotRow = { reservation_slot_id: string | null };
 type FeedbackKind = 'success' | 'error' | 'info';
 type DisplayMode = 'threeDays' | 'week';
-type CreateResponse = { ok?: boolean; message?: string; detail?: string };
+type CreateResponse = { ok?: boolean; message?: string; detail?: string; memberMail?: string; adminMail?: string; mailLogs?: string; mailLogError?: string | null };
 
 const zone = 'Asia/Tokyo';
 const standardTimes = ['10:00', '10:50', '11:40', '12:30', '18:30', '19:20', '20:10', '21:00'];
@@ -54,6 +54,19 @@ function friendly(message: string) {
   if (message.includes('満席') || message.includes('定員')) return 'この枠は満席になりました。別の枠をお選びください。';
   if (message.includes('row-level security')) return '予約できませんでした。ログイン状態、または会員情報の設定を確認してください。';
   return message || '予約処理でエラーが発生しました。';
+}
+
+function bookingSuccessMessage(result: CreateResponse) {
+  if (result.memberMail === 'sent') {
+    return '予約が完了しました。予約完了メールも送信しました。';
+  }
+  if (result.memberMail === 'failed') {
+    return '予約は完了しましたが、予約完了メールの送信に失敗しました。Resendまたは送信元メール設定を確認してください。';
+  }
+  if (result.memberMail === 'skipped') {
+    return '予約は完了しましたが、メール設定不足のため予約完了メールはスキップされました。';
+  }
+  return '予約が完了しました。予約一覧に移動して内容を確認します。';
 }
 
 function toGridSlot(slot: SlotRow, bookedCount: number, bookedByCurrentUser: boolean, sameDayBookedDates: Set<string>): ReservationGridSlot {
@@ -228,9 +241,9 @@ export default function ReservePage() {
         void load(true);
         return;
       }
-      show('success', '予約が完了しました。予約一覧に移動して内容を確認します。');
+      show('success', bookingSuccessMessage(result));
       setSubmittingSlotId(null);
-      window.setTimeout(() => { window.location.href = '/my-reservations'; }, 700);
+      window.setTimeout(() => { window.location.href = '/my-reservations'; }, 1400);
     } catch (error) {
       show('error', friendly(error instanceof Error ? error.message : '通信エラーが発生しました。'));
       setSubmittingSlotId(null);
