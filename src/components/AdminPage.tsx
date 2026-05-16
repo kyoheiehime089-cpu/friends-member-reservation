@@ -2,19 +2,37 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { AppShell } from '@/components/AppShell';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 
-const adminLinks = [
-  { href: '/admin', label: 'ダッシュボード' },
-  { href: '/admin/reservations', label: '予約一覧' },
-  { href: '/admin/members', label: '会員一覧' },
-  { href: '/admin/menus', label: 'メニュー管理' },
-  { href: '/admin/plans', label: 'プラン管理' },
-  { href: '/admin/schedules', label: '予約枠管理' },
-  { href: '/admin/settings', label: '基本設定' }
+const ownerLinks = [
+  { href: '/owner', label: 'トップ' },
+  { href: '/owner/members', label: '会員管理' },
+  { href: '/owner/schedules', label: '予約枠' },
+  { href: '/owner/plans', label: 'プラン' },
+  { href: '/owner/menus', label: 'メニュー' },
+  { href: '/owner/reservations', label: '予約一覧' },
+  { href: '/owner/settings', label: '基本設定' }
 ];
+
+function OwnerShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="sticky top-0 z-20 border-b border-gray-800 bg-gray-950 text-white">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
+          <Link href="/owner" className="font-black text-yellow-300">friends 管理者</Link>
+          <nav className="flex gap-3 text-xs font-black sm:text-sm">
+            <Link href="/owner/members">会員</Link>
+            <Link href="/owner/schedules">予約枠</Link>
+            <Link href="/owner/plans">プラン</Link>
+            <Link href="/owner/menus">メニュー</Link>
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+    </div>
+  );
+}
 
 export function AdminPage({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   const [checking, setChecking] = useState(true);
@@ -23,7 +41,7 @@ export function AdminPage({ title, description, children }: { title: string; des
 
   useEffect(() => {
     let mounted = true;
-    async function checkAdmin() {
+    async function check() {
       const client = getSupabaseClient();
       if (!client) {
         if (mounted) {
@@ -33,52 +51,48 @@ export function AdminPage({ title, description, children }: { title: string; des
         return;
       }
 
-      const { data: userData } = await client.auth.getUser();
-      if (!userData.user) {
+      const { data } = await client.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) {
         if (mounted) {
-          setMessage('管理者画面を表示するにはログインしてください。');
+          setMessage('管理者としてログインしてください。');
           setChecking(false);
         }
         return;
       }
 
-      const { data: adminRow, error } = await client
-        .from('admin_users')
-        .select('id')
-        .eq('id', userData.user.id)
-        .maybeSingle();
-
+      const response = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const result = await response.json().catch(() => ({})) as { ok?: boolean; message?: string };
       if (mounted) {
-        setAllowed(Boolean(adminRow) && !error);
-        setMessage(error ? `管理者権限の確認に失敗しました: ${error.message}` : '管理者権限がありません。');
+        setAllowed(response.ok && result.ok === true);
+        setMessage(result.message ?? '管理者権限がありません。');
         setChecking(false);
       }
     }
-
-    void checkAdmin();
+    void check();
     return () => { mounted = false; };
   }, []);
 
   if (checking || !allowed) {
     return (
-      <AppShell>
+      <OwnerShell>
         <SupabaseNotice />
-        <div className="mx-auto max-w-xl rounded-3xl border border-yellow-200 bg-white p-6 text-center shadow-sm">
+        <div className="mx-auto max-w-xl rounded-3xl border border-gray-200 bg-white p-6 text-center shadow-sm">
           <p className="text-xl font-black">{checking ? '確認中' : '管理者画面'}</p>
           <p className="mt-3 font-bold text-gray-600">{message}</p>
-          {!checking && <Link href="/login" className="mt-5 inline-block rounded-full bg-yellow-400 px-6 py-3 font-black text-gray-950">ログインへ</Link>}
+          {!checking && <Link href="/login" className="mt-5 inline-block rounded-full bg-yellow-400 px-6 py-3 font-black text-gray-950">ログイン</Link>}
         </div>
-      </AppShell>
+      </OwnerShell>
     );
   }
 
   return (
-    <AppShell>
+    <OwnerShell>
       <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-        <aside className="rounded-3xl border border-yellow-200 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-yellow-600">Admin</p>
+        <aside className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-yellow-600">Owner</p>
           <nav className="grid gap-2">
-            {adminLinks.map((link) => (
+            {ownerLinks.map((link) => (
               <Link key={link.href} href={link.href} className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-yellow-100">
                 {link.label}
               </Link>
@@ -94,6 +108,6 @@ export function AdminPage({ title, description, children }: { title: string; des
           {children}
         </section>
       </div>
-    </AppShell>
+    </OwnerShell>
   );
 }
