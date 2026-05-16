@@ -6,6 +6,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const gridTimeZone = 'Asia/Tokyo';
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const dateFormatter = new Intl.DateTimeFormat('ja-JP', {
   year: 'numeric',
   month: 'numeric',
@@ -17,6 +19,12 @@ const timeFormatter = new Intl.DateTimeFormat('ja-JP', {
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
+  timeZone: gridTimeZone
+});
+const jstDatePartsFormatter = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
   timeZone: gridTimeZone
 });
 
@@ -46,10 +54,29 @@ type ReservationRow = {
   status: string | null;
 };
 
+type BookedReservationRow = {
+  id: string;
+  reservation_slot_id: string | null;
+};
+
+type BookedSlotRow = {
+  id: string;
+  starts_at: string | null;
+};
+
 type MemberRow = {
   id: string;
   full_name: string | null;
   email: string | null;
+  plan_id: string | null;
+};
+
+type PlanRow = {
+  id: string;
+  name: string;
+  weekly_limit: number | null;
+  unlimited: boolean | null;
+  is_active: boolean | null;
 };
 
 type MailLogRow = {
@@ -58,6 +85,12 @@ type MailLogRow = {
   subject: string;
   status: string;
   provider_response: unknown;
+};
+
+type JstDateParts = {
+  year: number;
+  month: number;
+  day: number;
 };
 
 function getSupabaseConfig() {
@@ -102,6 +135,38 @@ function createDbClient(supabaseUrl: string, supabaseAnonKey: string, serviceKey
   return createUserClient(supabaseUrl, supabaseAnonKey, accessToken);
 }
 
+function getJstDateParts(value: Date | string): JstDateParts {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const parts = jstDatePartsFormatter.formatToParts(date);
+  const year = Number(parts.find((part) => part.type === 'year')?.value ?? '0');
+  const month = Number(parts.find((part) => part.type === 'month')?.value ?? '0');
+  const day = Number(parts.find((part) => part.type === 'day')?.value ?? '0');
+  return { year, month, day };
+}
+
+function getJstDateKey(value: Date | string) {
+  const parts = getJstDateParts(value);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function getPreviousDay22JstDeadline(value: Date | string) {
+  const { year, month, day } = getJstDateParts(value);
+  return new Date(Date.UTC(year, month - 1, day - 1, 13, 0, 0, 0));
+}
+
+function hasPassedPreviousDay22Deadline(value: Date | string) {
+  return new Date() >= getPreviousDay22JstDeadline(value);
+}
+
+function getJstWeekRange(value: Date | string) {
+  const { year, month, day } = getJstDateParts(value);
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  const daysFromMonday = (weekday + 6) % 7;
+  const start = new Date(Date.UTC(year, month - 1, day - daysFromMonday, -9, 0, 0, 0));
+  const end = new Date(Date.UTC(year, month - 1, day - daysFromMonday + 7, -9, 0, 0, 0));
+  return { start, end };
+}
+
 function friendlyMessage(message: string) {
   if (message.includes('duplicate key') || message.includes('unique') || message.includes('already exists')) {
     return 'この枠はすでに予約済みです。予約一覧をご確認ください。';
@@ -139,7 +204,7 @@ function buildReservationMail(params: {
   const startTimeLabel = startsAt ? timeFormatter.format(startsAt) : '';
   const endTimeLabel = endsAt ? timeFormatter.format(endsAt) : '';
 
-  return `${params.memberName} 様\n\nご予約ありがとうございます。\n以下の内容で予約を受け付けました。\n\n【店舗】\nfriends 行徳\n\n【メニュー】\n${params.menuName}\n\n【予約日時】\n${dateLabel} ${startTimeLabel}〜${endTimeLabel}\n\nキャンセルや変更が必要な場合は、予約一覧からご確認ください。\n\n当日お会いできるのを楽しみにしております。`;
+  return `${params.memberName} 様\n\nご予約ありがとうございます。\n以下の内容で予約を受け付けました。\n\n【店舗】\nfriends 行徳\n\n【メニュー】\n${params.menuName}\n\n【予約日時】\n${dateLabel} ${startTimeLabel}〜${endTimeLabel}\n\n【予約・キャンセル締切】\n前日22:00まで\n\nキャンセルや変更が必要な場合は、予約一覧からご確認ください。\n\n当日お会いできるのを楽しみにしております。`;
 }
 
 async function ensureMember(dbClient: SupabaseClient, params: {
@@ -150,7 +215,7 @@ async function ensureMember(dbClient: SupabaseClient, params: {
 }) {
   const { data: existingMember } = await dbClient
     .from('members')
-    .select('id,full_name,email')
+    .select('id,full_name,email,plan_id')
     .eq('id', params.userId)
     .maybeSingle();
 
@@ -167,7 +232,7 @@ async function ensureMember(dbClient: SupabaseClient, params: {
       email: params.email,
       status: '有効'
     })
-    .select('id,full_name,email')
+    .select('id,full_name,email,plan_id')
     .single();
 
   if (error) {
@@ -187,6 +252,65 @@ async function writeMailLogs(dbClient: SupabaseClient, rows: MailLogRow[]) {
     return { status: 'failed', error: error.message };
   }
   return { status: 'recorded', error: null };
+}
+
+async function loadMemberPlan(dbClient: SupabaseClient, planId?: string | null) {
+  if (!planId) return { plan: null as PlanRow | null, errorMessage: null as string | null };
+  const { data, error } = await dbClient
+    .from('plans')
+    .select('id,name,weekly_limit,unlimited,is_active')
+    .eq('id', planId)
+    .maybeSingle();
+
+  return { plan: (data as PlanRow | null) ?? null, errorMessage: error?.message ?? null };
+}
+
+async function loadBookedSlotsForMember(dbClient: SupabaseClient, userId: string) {
+  const { data: reservationRows, error: reservationError } = await dbClient
+    .from('reservations')
+    .select('id,reservation_slot_id')
+    .eq('member_id', userId)
+    .eq('status', 'booked');
+
+  if (reservationError) {
+    return { ok: false, reservations: [] as BookedReservationRow[], slotsById: new Map<string, BookedSlotRow>(), errorMessage: reservationError.message };
+  }
+
+  const reservations = (reservationRows ?? []) as BookedReservationRow[];
+  const slotIds = Array.from(new Set(
+    reservations
+      .map((reservation) => reservation.reservation_slot_id)
+      .filter((slotId): slotId is string => Boolean(slotId) && uuidPattern.test(slotId))
+  ));
+
+  if (slotIds.length === 0) {
+    return { ok: true, reservations, slotsById: new Map<string, BookedSlotRow>(), errorMessage: null };
+  }
+
+  const { data: slotRows, error: slotError } = await dbClient
+    .from('reservation_slots')
+    .select('id,starts_at')
+    .in('id', slotIds);
+
+  if (slotError) {
+    return { ok: false, reservations, slotsById: new Map<string, BookedSlotRow>(), errorMessage: slotError.message };
+  }
+
+  return {
+    ok: true,
+    reservations,
+    slotsById: new Map(((slotRows ?? []) as BookedSlotRow[]).map((slot) => [slot.id, slot])),
+    errorMessage: null
+  };
+}
+
+function countBookedInSameWeek(bookedSlots: BookedSlotRow[], startsAt: Date) {
+  const { start, end } = getJstWeekRange(startsAt);
+  return bookedSlots.filter((slot) => {
+    if (!slot.starts_at) return false;
+    const slotStartsAt = new Date(slot.starts_at);
+    return slotStartsAt >= start && slotStartsAt < end;
+  }).length;
 }
 
 export async function POST(request: Request) {
@@ -229,6 +353,10 @@ export async function POST(request: Request) {
   const startsAt = new Date(slot.starts_at);
   if (Number.isNaN(startsAt.getTime()) || startsAt <= new Date()) {
     return NextResponse.json({ ok: false, message: '開始済み、または過去の予約枠は予約できません。' }, { status: 400 });
+  }
+
+  if (hasPassedPreviousDay22Deadline(startsAt)) {
+    return NextResponse.json({ ok: false, message: 'この枠の予約受付は終了しました。予約は前日22:00までです。' }, { status: 400 });
   }
 
   if (slot.is_open === false) {
@@ -275,12 +403,43 @@ export async function POST(request: Request) {
     storeId: slot.store_id
   });
 
-  if (!memberResult.ok) {
+  if (!memberResult.ok || !memberResult.member) {
     return NextResponse.json({
       ok: false,
       message: friendlyMessage(memberResult.errorMessage ?? '会員情報の作成に失敗しました。'),
       detail: 'members に会員行を作成できませんでした。SUPABASE_SERVICE_ROLE_KEY または members のRLS設定を確認してください。'
     }, { status: 400 });
+  }
+
+  const bookedSlotsResult = await loadBookedSlotsForMember(dbClient, userData.user.id);
+  if (!bookedSlotsResult.ok) {
+    return NextResponse.json({ ok: false, message: friendlyMessage(bookedSlotsResult.errorMessage ?? '予約履歴の確認に失敗しました。') }, { status: 400 });
+  }
+
+  const targetDateKey = getJstDateKey(startsAt);
+  const bookedSlots = bookedSlotsResult.reservations
+    .map((reservation) => reservation.reservation_slot_id ? bookedSlotsResult.slotsById.get(reservation.reservation_slot_id) : null)
+    .filter((slotRow): slotRow is BookedSlotRow => Boolean(slotRow?.starts_at));
+
+  const hasSameDayBooking = bookedSlots.some((bookedSlot) => bookedSlot.id !== slot.id && bookedSlot.starts_at && getJstDateKey(bookedSlot.starts_at) === targetDateKey);
+  if (hasSameDayBooking) {
+    return NextResponse.json({ ok: false, message: '同じ日に予約できるのは1枠までです。予約一覧をご確認ください。' }, { status: 409 });
+  }
+
+  const { plan, errorMessage: planErrorMessage } = await loadMemberPlan(dbClient, memberResult.member.plan_id);
+  if (planErrorMessage) {
+    return NextResponse.json({ ok: false, message: `会員プランの確認に失敗しました: ${planErrorMessage}` }, { status: 400 });
+  }
+
+  if (plan?.is_active === false) {
+    return NextResponse.json({ ok: false, message: '現在のプランは無効です。予約をご希望の場合はスタッフにご連絡ください。' }, { status: 403 });
+  }
+
+  if (plan && plan.unlimited !== true && typeof plan.weekly_limit === 'number') {
+    const weeklyBookedCount = countBookedInSameWeek(bookedSlots, startsAt);
+    if (weeklyBookedCount >= plan.weekly_limit) {
+      return NextResponse.json({ ok: false, message: `${plan.name}では、この週の予約上限に達しています。` }, { status: 409 });
+    }
   }
 
   // Insert reservations with the user-scoped client so DB triggers can still see auth.uid().
