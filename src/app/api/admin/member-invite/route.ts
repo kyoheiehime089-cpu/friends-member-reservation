@@ -20,10 +20,12 @@ function buildLineMessage(params: { fullName: string; email: string; loginCode: 
 【ログインID】
 ${params.email}
 
-【初期パスワード】
+【ログインコード】
 ${params.loginCode}
 
-LINEのリッチメニューから予約画面を開き、上記のログインIDと初期パスワードでログインしてください。`;
+LINEのリッチメニューから予約画面を開き、上記のログインIDとログインコードでログインしてください。
+
+ログイン後、画面上にご自身のお名前が表示されていることをご確認ください。`;
 }
 
 async function getDefaultStoreId(serviceClient: ReturnType<typeof createServiceClient>) {
@@ -51,12 +53,12 @@ export async function POST(request: Request) {
   const email = body.email?.trim().toLowerCase();
   const planId = typeof body.planId === 'string' && body.planId.trim() ? body.planId.trim() : null;
   const status = body.status?.trim() || '有効';
-  const loginCode = createInitialLoginCode();
 
   if (!fullName) return NextResponse.json({ ok: false, message: '会員名を入力してください。' }, { status: 400 });
   if (!email || !email.includes('@')) return NextResponse.json({ ok: false, message: 'メールアドレスを正しく入力してください。' }, { status: 400 });
   if (!allowedMemberStatuses.includes(status)) return NextResponse.json({ ok: false, message: 'status が不正です。' }, { status: 400 });
 
+  const loginCode = createInitialLoginCode(email);
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
 
   try {
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
   if (existing) {
     const { error: authUpdateError } = await serviceClient.auth.admin.updateUserById(existing.id, {
       password: loginCode,
+      email_confirm: true,
       user_metadata: { full_name: fullName, name: fullName }
     });
 
