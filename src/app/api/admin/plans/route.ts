@@ -13,6 +13,16 @@ type PlanBody = {
 };
 
 const planSelect = 'id,name,weekly_limit,unlimited,is_active,created_at';
+const defaultPlans = [
+  { name: 'セミパーソナル週1', weekly_limit: 1, unlimited: false, is_active: true },
+  { name: 'セミパーソナル週2', weekly_limit: 2, unlimited: false, is_active: true },
+  { name: 'セミパーソナル通い放題', weekly_limit: null, unlimited: true, is_active: true },
+  { name: 'ヨガ週1', weekly_limit: 1, unlimited: false, is_active: true },
+  { name: 'ヨガ週2', weekly_limit: 2, unlimited: false, is_active: true },
+  { name: 'ヨガ通い放題', weekly_limit: null, unlimited: true, is_active: true },
+  { name: '個別設定', weekly_limit: null, unlimited: true, is_active: true },
+  { name: '未設定', weekly_limit: 1, unlimited: false, is_active: true }
+];
 
 function normalizeWeeklyLimit(value: unknown, unlimited: boolean) {
   if (unlimited) return null;
@@ -26,9 +36,17 @@ export async function GET(request: Request) {
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient.from('plans').select(planSelect).order('name', { ascending: true });
+  let { data, error } = await serviceClient.from('plans').select(planSelect).order('name', { ascending: true });
 
   if (error) return NextResponse.json({ ok: false, message: `プラン一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
+  if ((data ?? []).length === 0) {
+    const { error: seedError } = await serviceClient.from('plans').insert(defaultPlans);
+    if (seedError) return NextResponse.json({ ok: false, message: `標準プランの作成に失敗しました: ${seedError.message}` }, { status: 400 });
+    const result = await serviceClient.from('plans').select(planSelect).order('name', { ascending: true });
+    data = result.data;
+    error = result.error;
+    if (error) return NextResponse.json({ ok: false, message: `プラン一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
+  }
   return NextResponse.json({ ok: true, plans: data ?? [] });
 }
 
