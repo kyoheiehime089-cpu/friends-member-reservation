@@ -1,4 +1,5 @@
 import { ReservationCell } from '@/components/ReservationCell';
+import { CalendarDayHeader } from '@/components/CalendarDayHeader';
 
 export type ReservationGridSlot = {
   id: string;
@@ -54,39 +55,15 @@ export function ReservationGrid({ slots, submittingSlotId, onReserve, dates: pro
   return (
     <div className="w-full overflow-x-auto pb-1">
       <div className={`${dense ? 'rounded-2xl p-1.5' : 'rounded-3xl p-2 sm:p-3'} min-w-full border border-gray-200 bg-white shadow-sm`}>
-        <div
-          className="grid"
-          style={{
-            gap,
-            gridTemplateColumns: `${timeColumn} repeat(${dates.length}, minmax(${minDateColumn}, 1fr))`
-          }}
-        >
-          <div className={`${dense ? 'rounded-lg p-1 text-[11px]' : 'rounded-xl p-2 text-xs'} sticky left-0 z-20 bg-white text-center font-black text-gray-500 shadow-sm`}>
-            時間
-          </div>
-          {dates.map((date) => (
-            <div key={date.dateKey} className={`${dense ? 'rounded-lg p-1' : 'rounded-xl p-2'} bg-yellow-100 text-center shadow-sm`}>
-              <p className={`${dense ? 'text-[11px]' : 'text-sm'} font-black text-gray-950`}>{date.dateLabel}</p>
-              <p className={`${dense ? 'text-[10px]' : 'text-xs'} font-bold text-yellow-800`}>{date.weekdayLabel}</p>
-            </div>
-          ))}
-
+        <div className="grid" style={{ gap, gridTemplateColumns: `${timeColumn} repeat(${dates.length}, minmax(${minDateColumn}, 1fr))` }}>
+          <div className={`${dense ? 'rounded-lg p-1 text-[11px]' : 'rounded-xl p-2 text-xs'} sticky left-0 z-20 bg-white text-center font-black text-gray-500 shadow-sm`}>時間</div>
+          {dates.map((date) => <CalendarDayHeader key={date.dateKey} dateKey={date.dateKey} dateLabel={date.dateLabel} weekdayLabel={date.weekdayLabel} dense={dense} />)}
           {times.map((time) => (
             <div key={time} className="contents">
-              <div className={`${dense ? 'min-h-[44px] rounded-lg p-1 text-[11px]' : 'min-h-[68px] rounded-xl p-2 text-xs'} sticky left-0 z-10 flex items-center justify-center bg-white text-center font-black text-gray-950 shadow-sm ring-1 ring-gray-100`}>
-                {time}
-              </div>
+              <div className={`${dense ? 'min-h-[44px] rounded-lg p-1 text-[11px]' : 'min-h-[68px] rounded-xl p-2 text-xs'} sticky left-0 z-10 flex items-center justify-center bg-white text-center font-black text-gray-950 shadow-sm ring-1 ring-gray-100`}>{time}</div>
               {dates.map((date) => {
                 const slot = slotMap.get(`${date.dateKey}-${time}`) ?? null;
-                return (
-                  <ReservationCell
-                    key={`${date.dateKey}-${time}`}
-                    slot={slot}
-                    dense={dense}
-                    isSubmitting={Boolean(slot && submittingSlotId === slot.id)}
-                    onReserve={onReserve}
-                  />
-                );
+                return <ReservationCell key={`${date.dateKey}-${time}`} slot={slot} dense={dense} isSubmitting={Boolean(slot && submittingSlotId === slot.id)} onReserve={onReserve} />;
               })}
             </div>
           ))}
