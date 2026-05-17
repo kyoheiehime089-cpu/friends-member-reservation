@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { MemberIdentityBadge } from '@/components/MemberIdentityBadge';
+import { AccountMenu } from '@/components/AccountMenu';
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -8,8 +8,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-10 border-b border-yellow-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center justify-between gap-3">
-            <Link href="/" className="shrink-0 font-black text-yellow-600">friends予約</Link>
-            <MemberIdentityBadge />
+            <Link href="/reserve" className="shrink-0 font-black text-yellow-600">friends予約</Link>
+            <AccountMenu />
           </div>
           <nav className="flex shrink-0 gap-3 text-xs font-black text-gray-700 sm:text-sm">
             <Link href="/reserve">予約</Link>
