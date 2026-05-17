@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AdminPage } from '@/components/AdminPage';
+import { AdminScheduleRows } from '@/components/AdminScheduleRows';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 
 type Menu = { id: string; name: string; default_capacity: number };
-type Slot = { id: string; menu_id: string; starts_at: string; capacity: number; is_open: boolean };
+type Slot = { id: string; menu_id: string; starts_at: string; ends_at: string; capacity: number; is_open: boolean };
 
 const zone = 'Asia/Tokyo';
 const keyFmt = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: zone });
@@ -45,7 +46,7 @@ export function AdminSchedulesClient() {
     if (!client) { setMessage('Supabase環境変数を設定してください。'); return; }
     const [{ data: menuRows, error: menuError }, { data: slotRows, error: slotError }] = await Promise.all([
       client.from('menus').select('id,name,default_capacity').eq('is_active', true).order('name'),
-      client.from('reservation_slots').select('id,menu_id,starts_at,capacity,is_open').gte('starts_at', start.toISOString()).lt('starts_at', addDays(start, 7).toISOString()).order('starts_at')
+      client.from('reservation_slots').select('id,menu_id,starts_at,ends_at,capacity,is_open').gte('starts_at', start.toISOString()).lt('starts_at', addDays(start, 7).toISOString()).order('starts_at')
     ]);
     if (menuError || slotError) { setMessage(menuError?.message ?? slotError?.message ?? '予約枠の読み込みに失敗しました。'); return; }
     const nextMenus = ((menuRows ?? []) as Menu[]).sort((a, b) => menuOrder(a.name) - menuOrder(b.name) || a.name.localeCompare(b.name, 'ja'));
@@ -60,7 +61,7 @@ export function AdminSchedulesClient() {
     } else {
       setCounts({});
     }
-    setMessage('1週間分の予約枠を一覧表示しています。時間変更・定員変更は下の各予約枠管理フォーム側で保存してください。');
+    setMessage('1週間分の予約枠を一覧表示しています。下の編集欄で時間・定員・受付状態を保存できます。');
   }, [start]);
 
   useEffect(() => { void load(); }, [load]);
@@ -92,7 +93,7 @@ export function AdminSchedulesClient() {
                   return <div key={key} className="min-h-[54px] rounded-xl border border-gray-100 bg-gray-50 p-1">
                     {cellSlots.map((slot) => <div key={slot.id} className={`mb-1 rounded-lg p-1 text-[11px] font-black ${slot.is_open ? 'bg-yellow-50 text-gray-900 ring-1 ring-yellow-200' : 'bg-gray-200 text-gray-500'}`}>
                       <div className="truncate">{menuMap.get(slot.menu_id) ?? '未設定'}</div>
-                      <div>{counts[slot.id] ?? 0}/{slot.capacity}名 {slot.is_open ? '受付中' : '停止'}</div>
+                      <div>{counts[slot.id] ?? 0}/{slot.capacity}名 {slot.is_open ? '受付中' : '受付停止'}</div>
                     </div>)}
                   </div>;
                 })}
@@ -100,6 +101,7 @@ export function AdminSchedulesClient() {
             </div>
           </div>
         </section>
+        <AdminScheduleRows slots={visibleSlots} menus={menus} counts={counts} onSaved={load} onMessage={setMessage} />
       </div>
     </AdminPage>
   );
