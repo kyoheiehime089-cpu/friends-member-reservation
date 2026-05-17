@@ -1,4 +1,20 @@
-export function createInitialLoginCode() {
+export function createInitialLoginCode(seed?: string) {
+  const normalizedSeed = seed?.trim().toLowerCase();
+  if (normalizedSeed) {
+    const secret = process.env.MEMBER_LOGIN_CODE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || 'friends';
+    const source = `${secret}:${normalizedSeed}`;
+    let hashA = 2166136261;
+    let hashB = 16777619;
+    for (let index = 0; index < source.length; index += 1) {
+      const code = source.charCodeAt(index);
+      hashA ^= code;
+      hashA = Math.imul(hashA, 16777619) >>> 0;
+      hashB ^= code + index;
+      hashB = Math.imul(hashB, 2246822519) >>> 0;
+    }
+    return `F${hashA.toString(36)}${hashB.toString(36)}`.slice(0, 11);
+  }
+
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
   const values = new Uint32Array(10);
   crypto.getRandomValues(values);
@@ -22,7 +38,7 @@ ${reservationUrl}
 【ログイン用メールアドレス】
 ${params.to}
 
-【初期ログインコード】
+【ログインコード】
 ${params.loginCode}
 
 ログイン後、予約したいメニューを選んで空き枠からご予約ください。
