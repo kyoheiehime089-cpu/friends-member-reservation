@@ -1,8 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const allowedMemberStatuses = ['有効', '休会中', '退会予定', '退会済み', '停止中', '未払い'];
-const fallbackOwnerEmail = 'kyohei.ehime089@gmail.com';
+export const allowedMemberStatuses = ['有効', '休止予定', '休止中', '停止中'];
 
 export function getAdminConfig() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
@@ -28,7 +27,7 @@ function normalizeEmail(value?: string | null) {
 }
 
 function isConfiguredOwnerEmail(email: string) {
-  const configuredAdminEmail = normalizeEmail(process.env.ADMIN_NOTIFICATION_EMAIL || process.env.ADMIN_EMAIL || fallbackOwnerEmail);
+  const configuredAdminEmail = normalizeEmail(process.env.ADMIN_EMAIL || process.env.ADMIN_NOTIFICATION_EMAIL);
   return Boolean(email && configuredAdminEmail && email === configuredAdminEmail);
 }
 
