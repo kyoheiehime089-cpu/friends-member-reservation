@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export const allowedMemberStatuses = ['有効', '休止予定', '休止中', '停止中'];
+export const allowedMemberStatuses = ['有効', '休止予定', '休止中'];
 
 export function getAdminConfig() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
