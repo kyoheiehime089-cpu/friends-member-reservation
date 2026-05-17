@@ -12,6 +12,8 @@ type PlanBody = {
   isActive?: boolean;
 };
 
+const planSelect = 'id,name,weekly_limit,unlimited,is_active,created_at';
+
 function normalizeWeeklyLimit(value: unknown, unlimited: boolean) {
   if (unlimited) return null;
   const numberValue = Number(value);
@@ -24,10 +26,7 @@ export async function GET(request: Request) {
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient
-    .from('plans')
-    .select('id,name,weekly_limit,unlimited,is_active,created_at,updated_at')
-    .order('name', { ascending: true });
+  const { data, error } = await serviceClient.from('plans').select(planSelect).order('name', { ascending: true });
 
   if (error) return NextResponse.json({ ok: false, message: `プラン一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
   return NextResponse.json({ ok: true, plans: data ?? [] });
@@ -49,7 +48,7 @@ export async function POST(request: Request) {
   const { data, error } = await serviceClient
     .from('plans')
     .insert({ name, weekly_limit: weeklyLimit, unlimited, is_active: body.isActive !== false })
-    .select('id,name,weekly_limit,unlimited,is_active,created_at,updated_at')
+    .select(planSelect)
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `プランの作成に失敗しました: ${error.message}` }, { status: 400 });
@@ -64,9 +63,7 @@ export async function PATCH(request: Request) {
   const id = body.id?.trim();
   if (!id || !uuidPattern.test(id)) return NextResponse.json({ ok: false, message: 'プランIDが不正です。' }, { status: 400 });
 
-  const updatePayload: { name?: string; weekly_limit?: number | null; unlimited?: boolean; is_active?: boolean; updated_at: string } = {
-    updated_at: new Date().toISOString()
-  };
+  const updatePayload: { name?: string; weekly_limit?: number | null; unlimited?: boolean; is_active?: boolean } = {};
 
   if (typeof body.name === 'string') {
     const name = body.name.trim();
@@ -85,12 +82,7 @@ export async function PATCH(request: Request) {
   if (typeof body.isActive === 'boolean') updatePayload.is_active = body.isActive;
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient
-    .from('plans')
-    .update(updatePayload)
-    .eq('id', id)
-    .select('id,name,weekly_limit,unlimited,is_active,created_at,updated_at')
-    .single();
+  const { data, error } = await serviceClient.from('plans').update(updatePayload).eq('id', id).select(planSelect).single();
 
   if (error) return NextResponse.json({ ok: false, message: `プランの更新に失敗しました: ${error.message}` }, { status: 400 });
   return NextResponse.json({ ok: true, plan: data });
@@ -105,12 +97,7 @@ export async function DELETE(request: Request) {
   if (!id || !uuidPattern.test(id)) return NextResponse.json({ ok: false, message: 'プランIDが不正です。' }, { status: 400 });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient
-    .from('plans')
-    .update({ is_active: false, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select('id,name,weekly_limit,unlimited,is_active,created_at,updated_at')
-    .single();
+  const { data, error } = await serviceClient.from('plans').update({ is_active: false }).eq('id', id).select(planSelect).single();
 
   if (error) return NextResponse.json({ ok: false, message: `プランの停止に失敗しました: ${error.message}` }, { status: 400 });
   return NextResponse.json({ ok: true, plan: data });
