@@ -5,28 +5,19 @@ import Link from 'next/link';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 
-const ownerLinks = [
-  { href: '/owner', label: 'トップ' },
-  { href: '/owner/members', label: '会員作成' },
-  { href: '/owner/member-list', label: '会員一覧' },
-  { href: '/owner/schedules', label: '予約枠' },
-  { href: '/owner/plans', label: 'プラン' },
-  { href: '/owner/menus', label: 'メニュー' },
-  { href: '/owner/reservations', label: '予約一覧' },
-  { href: '/owner/settings', label: '基本設定' }
-];
-
 function OwnerShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-20 border-b border-gray-800 bg-gray-950 text-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <Link href="/owner" className="font-black text-yellow-300">friends 管理者</Link>
-          <nav className="flex gap-3 text-xs font-black sm:text-sm">
+          <Link href="/owner" className="shrink-0 font-black text-yellow-300">friends 管理者</Link>
+          <nav className="flex gap-3 overflow-x-auto whitespace-nowrap text-xs font-black sm:text-sm">
             <Link href="/owner/members">会員作成</Link>
             <Link href="/owner/member-list">会員一覧</Link>
             <Link href="/owner/schedules">予約枠</Link>
             <Link href="/owner/plans">プラン</Link>
+            <Link href="/owner/menus">メニュー</Link>
+            <Link href="/owner/reservations">予約一覧</Link>
           </nav>
         </div>
       </header>
@@ -89,26 +80,14 @@ export function AdminPage({ title, description, children }: { title: string; des
 
   return (
     <OwnerShell>
-      <div className="grid gap-6 lg:grid-cols-[220px_1fr]">
-        <aside className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
-          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-yellow-600">Owner</p>
-          <nav className="grid gap-2">
-            {ownerLinks.map((link) => (
-              <Link key={link.href} href={link.href} className="rounded-xl px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-yellow-100">
-                {link.label}
-              </Link>
-            ))}
-          </nav>
-        </aside>
-        <section className="space-y-5">
-          <SupabaseNotice />
-          <div>
-            <h1 className="text-3xl font-black text-gray-900">{title}</h1>
-            <p className="mt-2 text-gray-600">{description}</p>
-          </div>
-          {children}
-        </section>
-      </div>
+      <section className="space-y-5">
+        <SupabaseNotice />
+        <div>
+          <h1 className="text-3xl font-black text-gray-900">{title}</h1>
+          <p className="mt-2 text-gray-600">{description}</p>
+        </div>
+        {children}
+      </section>
     </OwnerShell>
   );
 }
