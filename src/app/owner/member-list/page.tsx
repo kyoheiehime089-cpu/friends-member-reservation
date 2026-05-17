@@ -34,7 +34,7 @@ type ApiBody = {
 
 type Draft = { planId: string; status: string; pauseMonth: string };
 
-const statusChoices = ['有効', '休止予定', '休止中', '停止中'];
+const statusChoices = ['有効', '休止予定', '休止中'];
 
 function formatDate(value?: string | null) {
   if (!value) return '-';
@@ -128,7 +128,7 @@ export default function OwnerMemberListPage() {
       setPlans(body.plans ?? []);
       setStatuses(statusChoices);
       setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, makeDraft(member)])));
-      setNotice('会員のプラン・状態・休止開始月を変更できます。休止予定は翌月以降のみ選択できます。');
+      setNotice('会員のプラン・状態・休止開始月を変更できます。削除したい会員は休止中にして予約不可にします。');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '会員情報の取得に失敗しました。');
     }
@@ -170,9 +170,9 @@ export default function OwnerMemberListPage() {
     }
   }
 
-  async function setPaused(member: Member) {
+  async function archiveMember(member: Member) {
     const label = member.full_name || member.email || 'この会員';
-    if (!window.confirm(`${label} を休止中にしますか？`)) return;
+    if (!window.confirm(`${label} を会員一覧から削除扱いにして予約不可にしますか？`)) return;
     await save(member, { status: '休止中' });
   }
 
@@ -227,7 +227,7 @@ export default function OwnerMemberListPage() {
                     </div>
                     <div className="flex gap-2 lg:flex-col">
                       <button type="button" disabled={!changed || busyId === member.id} onClick={() => void save(member)} className="rounded-full bg-yellow-400 px-4 py-2 text-sm font-black text-gray-950 disabled:bg-gray-200 disabled:text-gray-400">保存</button>
-                      <button type="button" disabled={busyId === member.id} onClick={() => void setPaused(member)} className="rounded-full bg-gray-800 px-4 py-2 text-sm font-black text-white disabled:opacity-50">休止中にする</button>
+                      <button type="button" disabled={busyId === member.id} onClick={() => void archiveMember(member)} className="rounded-full border border-red-300 px-4 py-2 text-sm font-black text-red-600 disabled:opacity-50">会員削除</button>
                     </div>
                   </div>
                 </div>
