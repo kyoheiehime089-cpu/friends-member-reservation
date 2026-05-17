@@ -30,6 +30,9 @@ type ApiBody = {
   plans?: Plan[];
   statuses?: string[];
   member?: Member;
+  lineMessage?: string;
+  loginId?: string;
+  loginCode?: string;
 };
 
 type Draft = { planId: string; status: string; pauseMonth: string };
@@ -95,6 +98,8 @@ export default function OwnerMemberListPage() {
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('会員情報を読み込んでいます。');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [guideText, setGuideText] = useState('');
+  const [guideName, setGuideName] = useState('');
 
   async function token() {
     const client = getSupabaseClient();
@@ -128,7 +133,7 @@ export default function OwnerMemberListPage() {
       setPlans(body.plans ?? []);
       setStatuses(statusChoices);
       setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, makeDraft(member)])));
-      setNotice('会員のプラン・状態・休止開始月を変更できます。削除したい会員は休止中にして予約不可にします。');
+      setNotice('会員のプラン・状態・休止開始月を変更できます。ログイン情報もここから再表示できます。');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '会員情報の取得に失敗しました。');
     }
@@ -176,6 +181,38 @@ export default function OwnerMemberListPage() {
     await save(member, { status: '休止中' });
   }
 
+  async function showLoginGuide(member: Member) {
+    setBusyId(member.id);
+    setGuideText('');
+    setGuideName(member.full_name || member.email || '会員');
+    setNotice('ログイン案内文を作成しています。');
+    try {
+      const response = await adminFetch('/api/admin/member-login-guide', {
+        method: 'POST',
+        body: JSON.stringify({ memberId: member.id })
+      });
+      const body = await response.json().catch(() => ({})) as ApiBody;
+      if (!response.ok || !body.ok || !body.lineMessage) throw new Error(body.message ?? 'ログイン案内文の作成に失敗しました。');
+      setGuideText(body.lineMessage);
+      setNotice('ログイン案内文を表示しました。コピーしてLINEで送ってください。');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'ログイン案内文の作成に失敗しました。');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function copyGuide() {
+    if (!guideText) return;
+    try {
+      await navigator.clipboard.writeText(guideText);
+      setNotice('ログイン案内文をコピーしました。LINEでそのまま送れます。');
+    } catch {
+      setNotice('コピーできませんでした。文面を長押ししてコピーしてください。');
+    }
+  }
+
   return (
     <AdminPage title="会員一覧・プラン管理" description="会員情報、開始日、プラン、状態、休止開始月を確認・変更できます。">
       <div className="space-y-4">
@@ -187,6 +224,19 @@ export default function OwnerMemberListPage() {
           </div>
         </div>
 
+        {guideText && (
+          <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-5 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-black text-gray-950">{guideName}へのログイン案内</h2>
+                <p className="text-sm font-bold text-gray-600">この文面をLINEで送ってください。</p>
+              </div>
+              <button type="button" onClick={() => void copyGuide()} className="rounded-full bg-gray-900 px-5 py-3 font-black text-white">ワンタップでコピー</button>
+            </div>
+            <textarea className="mt-4 min-h-52 w-full rounded-2xl border border-yellow-200 bg-white p-4 text-sm font-bold text-gray-800" value={guideText} readOnly />
+          </section>
+        )}
+
         <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
           <input className="mb-4 w-full rounded-xl border px-3 py-3" placeholder="会員名・メールで検索" value={search} onChange={(event) => setSearch(event.target.value)} />
           <div className="grid gap-3">
@@ -197,7 +247,7 @@ export default function OwnerMemberListPage() {
               const changed = draft.planId !== currentDraft.planId || draft.status !== currentDraft.status || draft.pauseMonth !== currentDraft.pauseMonth;
               return (
                 <div key={member.id} className="rounded-2xl border border-gray-200 p-4">
-                  <div className="grid gap-3 lg:grid-cols-[1.3fr_1fr_1fr_1fr_1fr_auto] lg:items-center">
+                  <div className="grid gap-3 lg:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_auto] lg:items-center">
                     <div>
                       <p className="text-lg font-black text-gray-950">{member.full_name || '名前未設定'}</p>
                       <p className="text-sm text-gray-500">{member.email || 'メール未設定'}</p>
@@ -227,6 +277,7 @@ export default function OwnerMemberListPage() {
                     </div>
                     <div className="flex gap-2 lg:flex-col">
                       <button type="button" disabled={!changed || busyId === member.id} onClick={() => void save(member)} className="rounded-full bg-yellow-400 px-4 py-2 text-sm font-black text-gray-950 disabled:bg-gray-200 disabled:text-gray-400">保存</button>
+                      <button type="button" disabled={busyId === member.id} onClick={() => void showLoginGuide(member)} className="rounded-full bg-blue-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50">ログイン案内</button>
                       <button type="button" disabled={busyId === member.id} onClick={() => void archiveMember(member)} className="rounded-full border border-red-300 px-4 py-2 text-sm font-black text-red-600 disabled:opacity-50">会員削除</button>
                     </div>
                   </div>
