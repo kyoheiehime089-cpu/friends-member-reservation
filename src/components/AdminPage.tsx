@@ -15,6 +15,7 @@ function OwnerShell({ children }: { children: ReactNode }) {
             <Link href="/owner/members">会員作成</Link>
             <Link href="/owner/member-list">会員一覧</Link>
             <Link href="/owner/schedules">予約枠</Link>
+            <Link href="/owner/slot-bulk">一括変更</Link>
             <Link href="/owner/plans">プラン</Link>
             <Link href="/owner/menus">メニュー</Link>
             <Link href="/owner/reservations">予約一覧</Link>
