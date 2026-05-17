@@ -7,7 +7,8 @@ import { getSupabaseClient } from '@/lib/supabaseClient';
 
 const ownerLinks = [
   { href: '/owner', label: 'トップ' },
-  { href: '/owner/members', label: '会員管理' },
+  { href: '/owner/members', label: '会員作成' },
+  { href: '/owner/member-list', label: '会員一覧' },
   { href: '/owner/schedules', label: '予約枠' },
   { href: '/owner/plans', label: 'プラン' },
   { href: '/owner/menus', label: 'メニュー' },
@@ -22,10 +23,10 @@ function OwnerShell({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
           <Link href="/owner" className="font-black text-yellow-300">friends 管理者</Link>
           <nav className="flex gap-3 text-xs font-black sm:text-sm">
-            <Link href="/owner/members">会員</Link>
+            <Link href="/owner/members">会員作成</Link>
+            <Link href="/owner/member-list">会員一覧</Link>
             <Link href="/owner/schedules">予約枠</Link>
             <Link href="/owner/plans">プラン</Link>
-            <Link href="/owner/menus">メニュー</Link>
           </nav>
         </div>
       </header>
