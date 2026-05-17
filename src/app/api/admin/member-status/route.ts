@@ -13,9 +13,16 @@ type Body = {
 
 const validStatuses = ['有効', '休止予定', '休止中', '停止中'];
 
+function nextMonthValue() {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function toStoredStatus(status: string, pauseMonth?: string) {
   if (status !== '休止予定') return status;
   if (!pauseMonth || !/^\d{4}-\d{2}$/.test(pauseMonth)) throw new Error('休止予定月を選択してください。');
+  if (pauseMonth < nextMonthValue()) throw new Error('休止予定月は翌月以降を選択してください。');
   return `休止予定:${pauseMonth}-01`;
 }
 
