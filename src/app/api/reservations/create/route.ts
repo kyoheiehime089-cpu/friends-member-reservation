@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { canMemberBookByStatus, getMemberStatusLabel } from '@/lib/memberStatus';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,10 +50,6 @@ function isStillActiveFuture(slot: { starts_at?: string | null; ends_at?: string
   return Boolean(endOrStart && new Date(endOrStart) > now);
 }
 
-function canBookByStatus(status: string | null | undefined) {
-  return !status || status === '有効';
-}
-
 export async function POST(request: Request) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
@@ -96,8 +93,8 @@ export async function POST(request: Request) {
     member = createdMember as Member;
   }
 
-  if (!canBookByStatus(member.status)) {
-    return NextResponse.json({ ok: false, message: `現在の会員ステータスは「${member.status}」です。予約をご希望の場合はスタッフにご連絡ください。` }, { status: 403 });
+  if (!canMemberBookByStatus(member.status)) {
+    return NextResponse.json({ ok: false, message: `現在の会員ステータスは「${getMemberStatusLabel(member.status)}」です。予約をご希望の場合はスタッフにご連絡ください。` }, { status: 403 });
   }
 
   const { data: allReservations, error: reservationReadError } = await db.from('reservations').select('id,reservation_slot_id').eq('member_id', user.id).eq('status', 'booked');
