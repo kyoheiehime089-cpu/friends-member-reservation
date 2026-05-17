@@ -43,25 +43,38 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'Asia/Tokyo' }).format(date);
 }
 
-function currentMonthValue() {
+function nextMonthValue() {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function pauseStartIsPast(status?: string | null) {
+  if (!status?.startsWith('休止予定:')) return false;
+  const value = status.replace('休止予定:', '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const start = new Date(`${value}T00:00:00+09:00`);
+  return !Number.isNaN(start.getTime()) && new Date() >= start;
 }
 
 function baseStatus(status?: string | null) {
+  if (pauseStartIsPast(status)) return '休止中';
   if (status?.startsWith('休止予定:')) return '休止予定';
   return statusChoices.includes(status ?? '') ? status ?? '有効' : '有効';
 }
 
 function pauseMonth(status?: string | null) {
-  if (!status?.startsWith('休止予定:')) return currentMonthValue();
+  const min = nextMonthValue();
+  if (!status?.startsWith('休止予定:')) return min;
   const value = status.replace('休止予定:', '').slice(0, 7);
-  return /^\d{4}-\d{2}$/.test(value) ? value : currentMonthValue();
+  if (!/^\d{4}-\d{2}$/.test(value)) return min;
+  return value < min ? min : value;
 }
 
 function displayStatus(status?: string | null) {
+  if (pauseStartIsPast(status)) return '休止中（休止開始日を過ぎています）';
   if (status?.startsWith('休止予定:')) {
-    const month = pauseMonth(status);
+    const month = status.replace('休止予定:', '').slice(0, 7);
     const [year, monthNumber] = month.split('-');
     return `休止予定：${year}年${Number(monthNumber)}月〜`;
   }
@@ -115,7 +128,7 @@ export default function OwnerMemberListPage() {
       setPlans(body.plans ?? []);
       setStatuses(statusChoices);
       setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, makeDraft(member)])));
-      setNotice('会員のプラン・状態・休止開始月を変更できます。');
+      setNotice('会員のプラン・状態・休止開始月を変更できます。休止予定は翌月以降のみ選択できます。');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '会員情報の取得に失敗しました。');
     }
@@ -134,8 +147,8 @@ export default function OwnerMemberListPage() {
   async function save(member: Member, override?: Partial<Draft>) {
     const currentDraft = drafts[member.id] ?? makeDraft(member);
     const draft = { ...currentDraft, ...override };
-    if (draft.status === '休止予定' && !draft.pauseMonth) {
-      setNotice('休止予定にする場合は、休止開始月を選択してください。');
+    if (draft.status === '休止予定' && (!draft.pauseMonth || draft.pauseMonth < nextMonthValue())) {
+      setNotice('休止予定にする場合は、翌月以降の休止開始月を選択してください。');
       return;
     }
     setBusyId(member.id);
@@ -206,7 +219,7 @@ export default function OwnerMemberListPage() {
                       {draft.status === '休止予定' ? (
                         <label className="grid gap-1 text-xs font-black text-gray-600">
                           休止開始月
-                          <input type="month" className="rounded-xl border px-3 py-3 text-sm font-bold" value={draft.pauseMonth} onChange={(event) => setDrafts((current) => ({ ...current, [member.id]: { ...draft, pauseMonth: event.target.value } }))} />
+                          <input type="month" min={nextMonthValue()} className="rounded-xl border px-3 py-3 text-sm font-bold" value={draft.pauseMonth} onChange={(event) => setDrafts((current) => ({ ...current, [member.id]: { ...draft, pauseMonth: event.target.value } }))} />
                         </label>
                       ) : (
                         <p className="rounded-xl bg-gray-50 px-3 py-3 text-xs font-bold text-gray-400">休止月なし</p>
