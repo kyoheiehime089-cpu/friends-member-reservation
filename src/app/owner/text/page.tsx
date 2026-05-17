@@ -7,9 +7,11 @@ import { getSupabaseClient } from '@/lib/supabaseClient';
 type Plan = { id: string; name: string; weekly_limit: number | null; unlimited: boolean | null; is_active: boolean | null };
 type ApiBody = { ok?: boolean; message?: string; plans?: Plan[]; statuses?: string[]; lineMessage?: string };
 
+const statusChoices = ['有効', '休止予定', '休止中', '停止中'];
+
 export default function OwnerTextPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [statuses, setStatuses] = useState(['有効', '休会中', '退会予定', '退会済み', '停止中', '未払い']);
+  const [statuses, setStatuses] = useState(statusChoices);
   const [name, setName] = useState('');
   const [mail, setMail] = useState('');
   const [planId, setPlanId] = useState('');
@@ -32,7 +34,7 @@ export default function OwnerTextPage() {
     const b = await r.json().catch(() => ({})) as ApiBody;
     if (!r.ok || !b.ok) return setNotice(b.message ?? '読み込みに失敗しました。');
     setPlans(b.plans ?? []);
-    if (b.statuses?.length) setStatuses(b.statuses);
+    setStatuses(statusChoices);
   }
 
   useEffect(() => { void load(); }, []);
