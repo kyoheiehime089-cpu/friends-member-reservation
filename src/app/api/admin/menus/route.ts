@@ -18,6 +18,8 @@ function normalizeCapacity(value: unknown) {
   return Math.floor(numberValue);
 }
 
+const menuSelect = 'id,name,description,default_capacity,is_active,created_at';
+
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
@@ -25,7 +27,7 @@ export async function GET(request: Request) {
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
   const { data, error } = await serviceClient
     .from('menus')
-    .select('id,name,description,default_capacity,is_active,created_at,updated_at')
+    .select(menuSelect)
     .order('name', { ascending: true });
 
   if (error) return NextResponse.json({ ok: false, message: `メニュー一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
@@ -48,7 +50,7 @@ export async function POST(request: Request) {
   const { data, error } = await serviceClient
     .from('menus')
     .insert({ name, description, default_capacity: defaultCapacity, is_active: body.isActive !== false })
-    .select('id,name,description,default_capacity,is_active,created_at,updated_at')
+    .select(menuSelect)
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `メニューの作成に失敗しました: ${error.message}` }, { status: 400 });
@@ -63,9 +65,7 @@ export async function PATCH(request: Request) {
   const id = body.id?.trim();
   if (!id || !uuidPattern.test(id)) return NextResponse.json({ ok: false, message: 'メニューIDが不正です。' }, { status: 400 });
 
-  const updatePayload: { name?: string; description?: string | null; default_capacity?: number; is_active?: boolean; updated_at: string } = {
-    updated_at: new Date().toISOString()
-  };
+  const updatePayload: { name?: string; description?: string | null; default_capacity?: number; is_active?: boolean } = {};
   if (typeof body.name === 'string') {
     const name = body.name.trim();
     if (!name) return NextResponse.json({ ok: false, message: 'メニュー名を入力してください。' }, { status: 400 });
@@ -84,7 +84,7 @@ export async function PATCH(request: Request) {
     .from('menus')
     .update(updatePayload)
     .eq('id', id)
-    .select('id,name,description,default_capacity,is_active,created_at,updated_at')
+    .select(menuSelect)
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `メニューの更新に失敗しました: ${error.message}` }, { status: 400 });
@@ -102,9 +102,9 @@ export async function DELETE(request: Request) {
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
   const { data, error } = await serviceClient
     .from('menus')
-    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .update({ is_active: false })
     .eq('id', id)
-    .select('id,name,description,default_capacity,is_active,created_at,updated_at')
+    .select(menuSelect)
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `メニューの停止に失敗しました: ${error.message}` }, { status: 400 });
