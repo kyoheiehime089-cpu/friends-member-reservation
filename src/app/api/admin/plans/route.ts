@@ -31,6 +31,26 @@ function normalizeWeeklyLimit(value: unknown, unlimited: boolean) {
   return Math.floor(numberValue);
 }
 
+function defaultCapacityForPlan(name: string) {
+  if (name.includes('ヨガ')) return 7;
+  if (name.includes('セミ')) return 5;
+  return 8;
+}
+
+async function ensureMenuForPlan(serviceClient: ReturnType<typeof createServiceClient>, planName: string) {
+  if (planName.includes('＋') || planName.includes('+')) return;
+  const { data: store } = await serviceClient.from('stores').select('id').order('created_at', { ascending: true }).limit(1).maybeSingle();
+  const { data: existing } = await serviceClient.from('menus').select('id').eq('name', planName).maybeSingle();
+  if (existing?.id || !store?.id) return;
+  await serviceClient.from('menus').insert({
+    store_id: store.id,
+    name: planName,
+    description: `${planName}用の予約枠です。`,
+    default_capacity: defaultCapacityForPlan(planName),
+    is_active: true
+  });
+}
+
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
@@ -70,6 +90,7 @@ export async function POST(request: Request) {
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `プランの作成に失敗しました: ${error.message}` }, { status: 400 });
+  await ensureMenuForPlan(serviceClient, name);
   return NextResponse.json({ ok: true, plan: data });
 }
 
@@ -103,6 +124,7 @@ export async function PATCH(request: Request) {
   const { data, error } = await serviceClient.from('plans').update(updatePayload).eq('id', id).select(planSelect).single();
 
   if (error) return NextResponse.json({ ok: false, message: `プランの更新に失敗しました: ${error.message}` }, { status: 400 });
+  if (data?.name) await ensureMenuForPlan(serviceClient, data.name);
   return NextResponse.json({ ok: true, plan: data });
 }
 
