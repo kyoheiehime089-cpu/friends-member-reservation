@@ -19,18 +19,29 @@ function normalizeCapacity(value: unknown) {
 }
 
 const menuSelect = 'id,name,description,default_capacity,is_active,created_at';
+const defaultMenus = [
+  { name: 'セミパーソナル', description: '少人数でフォーム確認を受けながらトレーニングできます。', default_capacity: 5, is_active: true },
+  { name: 'ヨガ', description: 'blossom yoga のレッスンです。', default_capacity: 7, is_active: true },
+  { name: 'イベント', description: '特別イベント・ワークショップ用の枠です。', default_capacity: 8, is_active: true },
+  { name: '整体', description: '単発で追加する整体・リラクゼーション用の枠です。', default_capacity: 1, is_active: true }
+];
 
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient
-    .from('menus')
-    .select(menuSelect)
-    .order('name', { ascending: true });
+  let { data, error } = await serviceClient.from('menus').select(menuSelect).order('name', { ascending: true });
 
   if (error) return NextResponse.json({ ok: false, message: `メニュー一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
+  if ((data ?? []).length === 0) {
+    const { error: seedError } = await serviceClient.from('menus').insert(defaultMenus);
+    if (seedError) return NextResponse.json({ ok: false, message: `標準メニューの作成に失敗しました: ${seedError.message}` }, { status: 400 });
+    const result = await serviceClient.from('menus').select(menuSelect).order('name', { ascending: true });
+    data = result.data;
+    error = result.error;
+    if (error) return NextResponse.json({ ok: false, message: `メニュー一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
+  }
   return NextResponse.json({ ok: true, menus: data ?? [] });
 }
 
@@ -80,12 +91,7 @@ export async function PATCH(request: Request) {
   if (typeof body.isActive === 'boolean') updatePayload.is_active = body.isActive;
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient
-    .from('menus')
-    .update(updatePayload)
-    .eq('id', id)
-    .select(menuSelect)
-    .single();
+  const { data, error } = await serviceClient.from('menus').update(updatePayload).eq('id', id).select(menuSelect).single();
 
   if (error) return NextResponse.json({ ok: false, message: `メニューの更新に失敗しました: ${error.message}` }, { status: 400 });
   return NextResponse.json({ ok: true, menu: data });
@@ -100,12 +106,7 @@ export async function DELETE(request: Request) {
   if (!id || !uuidPattern.test(id)) return NextResponse.json({ ok: false, message: 'メニューIDが不正です。' }, { status: 400 });
 
   const serviceClient = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await serviceClient
-    .from('menus')
-    .update({ is_active: false })
-    .eq('id', id)
-    .select(menuSelect)
-    .single();
+  const { data, error } = await serviceClient.from('menus').update({ is_active: false }).eq('id', id).select(menuSelect).single();
 
   if (error) return NextResponse.json({ ok: false, message: `メニューの停止に失敗しました: ${error.message}` }, { status: 400 });
   return NextResponse.json({ ok: true, menu: data });
