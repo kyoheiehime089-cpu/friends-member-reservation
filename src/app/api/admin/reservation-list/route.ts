@@ -22,16 +22,11 @@ export async function GET(request: Request) {
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
 
   const db = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const end = new Date(today);
-  end.setDate(end.getDate() + 30);
-
   const { data: reservations, error } = await db
     .from('reservations')
     .select('id,reservation_slot_id,member_id,status,created_at')
     .order('created_at', { ascending: false })
-    .limit(300);
+    .limit(500);
 
   if (error) return NextResponse.json({ ok: false, message: `予約一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
 
@@ -39,12 +34,12 @@ export async function GET(request: Request) {
   const slotIds = Array.from(new Set(rows.map((r) => r.reservation_slot_id).filter(Boolean))) as string[];
   const memberIds = Array.from(new Set(rows.map((r) => r.member_id).filter(Boolean))) as string[];
 
-  const slots: Slot[] = slotIds.length ? ((await db.from('reservation_slots').select('id,menu_id,starts_at,ends_at,capacity').in('id', slotIds)).data ?? []) as Slot[] : [];
+  const slots: Slot[] = slotIds.length ? (((await db.from('reservation_slots').select('id,menu_id,starts_at,ends_at,capacity').in('id', slotIds)).data ?? []) as Slot[]) : [];
   const menuIds = Array.from(new Set(slots.map((s) => s.menu_id).filter(Boolean))) as string[];
-  const menus: Menu[] = menuIds.length ? ((await db.from('menus').select('id,name').in('id', menuIds)).data ?? []) as Menu[] : [];
-  const members: Member[] = memberIds.length ? ((await db.from('members').select('id,full_name,email,plan_id').in('id', memberIds)).data ?? []) as Member[] : [];
+  const menus: Menu[] = menuIds.length ? (((await db.from('menus').select('id,name').in('id', menuIds)).data ?? []) as Menu[]) : [];
+  const members: Member[] = memberIds.length ? (((await db.from('members').select('id,full_name,email,plan_id').in('id', memberIds)).data ?? []) as Member[]) : [];
   const planIds = Array.from(new Set(members.map((m) => m.plan_id).filter(Boolean))) as string[];
-  const plans: Plan[] = planIds.length ? ((await db.from('plans').select('id,name').in('id', planIds)).data ?? []) as Plan[] : [];
+  const plans: Plan[] = planIds.length ? (((await db.from('plans').select('id,name').in('id', planIds)).data ?? []) as Plan[]) : [];
 
   const slotMap = new Map(slots.map((s) => [s.id, s]));
   const menuMap = new Map(menus.map((m) => [m.id, m]));
@@ -58,6 +53,7 @@ export async function GET(request: Request) {
     const plan = member?.plan_id ? planMap.get(member.plan_id) : null;
     return {
       id: reservation.id,
+      slotId: reservation.reservation_slot_id,
       status: reservation.status ?? 'booked',
       createdAt: reservation.created_at,
       startsAt: slot?.starts_at ?? null,
