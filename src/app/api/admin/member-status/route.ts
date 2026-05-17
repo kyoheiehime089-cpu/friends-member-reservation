@@ -11,7 +11,7 @@ type Body = {
   pauseMonth?: string;
 };
 
-const validStatuses = ['有効', '休止予定', '休止中', '停止中'];
+const validStatuses = ['有効', '休止予定', '休止中'];
 
 function nextMonthValue() {
   const now = new Date();
