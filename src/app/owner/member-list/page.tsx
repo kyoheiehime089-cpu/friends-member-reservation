@@ -34,6 +34,8 @@ type ApiBody = {
 
 type Draft = { planId: string; status: string };
 
+const statusChoices = ['有効', '休止予定', '休止中', '停止中'];
+
 function formatDate(value?: string | null) {
   if (!value) return '-';
   const date = new Date(value);
@@ -50,7 +52,7 @@ function planRule(plan: Plan) {
 export default function OwnerMemberListPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [statuses, setStatuses] = useState(['有効', '休会中', '退会予定', '退会済み', '停止中', '未払い']);
+  const [statuses, setStatuses] = useState(statusChoices);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [search, setSearch] = useState('');
   const [notice, setNotice] = useState('会員情報を読み込んでいます。');
@@ -82,8 +84,8 @@ export default function OwnerMemberListPage() {
       const nextMembers = body.members ?? [];
       setMembers(nextMembers);
       setPlans(body.plans ?? []);
-      if (body.statuses?.length) setStatuses(body.statuses);
-      setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, { planId: member.plan_id ?? '', status: member.status ?? '有効' }])));
+      setStatuses(statusChoices);
+      setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, { planId: member.plan_id ?? '', status: statusChoices.includes(member.status ?? '') ? member.status ?? '有効' : '有効' }])));
       setNotice('会員のプラン・状態を変更できます。');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '会員情報の取得に失敗しました。');
@@ -121,25 +123,8 @@ export default function OwnerMemberListPage() {
     }
   }
 
-  async function withdraw(member: Member) {
-    const label = member.full_name || member.email || 'この会員';
-    if (!window.confirm(`${label} を退会済みにしますか？`)) return;
-    setBusyId(member.id);
-    setNotice('退会処理をしています。');
-    try {
-      const response = await adminFetch('/api/admin/member-delete', {
-        method: 'POST',
-        body: JSON.stringify({ memberId: member.id })
-      });
-      const body = await response.json().catch(() => ({})) as ApiBody;
-      if (!response.ok || !body.ok) throw new Error(body.message ?? '退会処理に失敗しました。');
-      setNotice('退会済みにしました。');
-      await load();
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '退会処理に失敗しました。');
-    } finally {
-      setBusyId(null);
-    }
+  async function setPaused(member: Member) {
+    setDrafts((current) => ({ ...current, [member.id]: { ...(current[member.id] ?? { planId: member.plan_id ?? '', status: '有効' }), status: '休止中' } }));
   }
 
   return (
@@ -157,9 +142,10 @@ export default function OwnerMemberListPage() {
           <input className="mb-4 w-full rounded-xl border px-3 py-3" placeholder="会員名・メールで検索" value={search} onChange={(event) => setSearch(event.target.value)} />
           <div className="grid gap-3">
             {filtered.map((member) => {
-              const draft = drafts[member.id] ?? { planId: member.plan_id ?? '', status: member.status ?? '有効' };
+              const draft = drafts[member.id] ?? { planId: member.plan_id ?? '', status: statusChoices.includes(member.status ?? '') ? member.status ?? '有効' : '有効' };
               const currentPlan = member.plan_id ? planMap.get(member.plan_id) : null;
-              const changed = draft.planId !== (member.plan_id ?? '') || draft.status !== (member.status ?? '有効');
+              const currentStatus = statusChoices.includes(member.status ?? '') ? member.status ?? '有効' : '有効';
+              const changed = draft.planId !== (member.plan_id ?? '') || draft.status !== currentStatus;
               return (
                 <div key={member.id} className="rounded-2xl border border-gray-200 p-4">
                   <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr_1fr_1fr_auto] lg:items-center">
@@ -181,7 +167,7 @@ export default function OwnerMemberListPage() {
                     </select>
                     <div className="flex gap-2 lg:flex-col">
                       <button type="button" disabled={!changed || busyId === member.id} onClick={() => void save(member)} className="rounded-full bg-yellow-400 px-4 py-2 text-sm font-black text-gray-950 disabled:bg-gray-200 disabled:text-gray-400">保存</button>
-                      <button type="button" disabled={busyId === member.id} onClick={() => void withdraw(member)} className="rounded-full bg-red-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50">退会</button>
+                      <button type="button" disabled={busyId === member.id} onClick={() => void setPaused(member)} className="rounded-full bg-gray-800 px-4 py-2 text-sm font-black text-white disabled:opacity-50">休止中にする</button>
                     </div>
                   </div>
                 </div>
