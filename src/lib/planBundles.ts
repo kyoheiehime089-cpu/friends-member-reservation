@@ -89,6 +89,19 @@ export function buildBundlePlanName(plans: PlanLike[], planIds: string[]) {
     .join(separator);
 }
 
+export function assertValidPlanSelection(plans: PlanLike[]) {
+  const seen = new Map<string, string>();
+  for (const plan of plans) {
+    const category = getPlanCategory(plan.name);
+    if (!isExclusivePlanCategory(category)) continue;
+    const existing = seen.get(category);
+    if (existing) {
+      throw new Error(`${category}は1つだけ選択してください。${existing} と ${plan.name} は同時に付与できません。`);
+    }
+    seen.set(category, plan.name);
+  }
+}
+
 export async function ensurePlanForSelection(client: SupabaseClient, planIds: string[]) {
   const cleanIds = Array.from(new Set(planIds.filter(Boolean)));
   if (cleanIds.length === 0) return null;
@@ -102,6 +115,7 @@ export async function ensurePlanForSelection(client: SupabaseClient, planIds: st
   if (readError) throw new Error(`プラン確認に失敗しました: ${readError.message}`);
   const plans = (selectedPlans ?? []) as PlanLike[];
   if (plans.length !== cleanIds.length) throw new Error('選択されたプランの一部が見つかりません。');
+  assertValidPlanSelection(plans);
 
   const name = buildBundlePlanName(plans, cleanIds);
   const { data: existing, error: existingError } = await client.from('plans').select('id').eq('name', name).maybeSingle();
