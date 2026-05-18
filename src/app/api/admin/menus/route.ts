@@ -18,6 +18,13 @@ function normalizeCapacity(value: unknown) {
   return Math.floor(numberValue);
 }
 
+function isBookableMenu(row: { name?: string | null; is_active?: boolean | null }) {
+  const name = String(row.name ?? '').trim();
+  if (row.is_active === false) return false;
+  if (!name) return false;
+  return name !== '全メニュー';
+}
+
 const menuSelect = 'id,name,description,default_capacity,is_active,created_at';
 const defaultMenus = [
   { name: 'セミパーソナル', description: '少人数でフォーム確認を受けながらトレーニングできます。', default_capacity: 5, is_active: true },
@@ -42,7 +49,7 @@ export async function GET(request: Request) {
     error = result.error;
     if (error) return NextResponse.json({ ok: false, message: `メニュー一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, menus: data ?? [] });
+  return NextResponse.json({ ok: true, menus: (data ?? []).filter(isBookableMenu) });
 }
 
 export async function POST(request: Request) {
