@@ -18,6 +18,23 @@ function planOrder(name: string) {
   return 5;
 }
 
+export function getPlanCategory(name?: string | null) {
+  const raw = (name ?? '').trim();
+  if (!raw) return '';
+  if (raw.includes('セミ')) return 'セミパーソナル';
+  if (raw.includes('ヨガ')) return 'ヨガ';
+  if (raw.includes('イベント')) return 'イベント';
+  if (raw.includes('セミナー')) return 'セミナー';
+  if (raw.includes('座学')) return '座学';
+  return raw
+    .replace(/週\s*\d+\s*回?/g, '')
+    .replace(/通い放題/g, '')
+    .replace(/無制限/g, '')
+    .replace(/月\s*\d+\s*回?/g, '')
+    .replace(/[（）()]/g, '')
+    .trim() || raw;
+}
+
 export function isBundlePlanName(name?: string | null) {
   return Boolean(name && /[＋+]/.test(name));
 }
@@ -31,6 +48,18 @@ export function selectableBasePlans(plans: PlanLike[]) {
     .filter((plan) => plan.is_active !== false)
     .filter((plan) => !isBundlePlanName(plan.name))
     .sort((a, b) => planOrder(a.name) - planOrder(b.name) || a.name.localeCompare(b.name, 'ja'));
+}
+
+export function selectExclusivePlanIds(plans: PlanLike[], currentIds: string[], planId: string) {
+  const target = plans.find((plan) => plan.id === planId);
+  if (!target) return currentIds;
+  if (currentIds.includes(planId)) return currentIds.filter((id) => id !== planId);
+  const category = getPlanCategory(target.name);
+  const nextIds = currentIds.filter((id) => {
+    const plan = plans.find((item) => item.id === id);
+    return !plan || getPlanCategory(plan.name) !== category;
+  });
+  return [...nextIds, planId];
 }
 
 export function selectedPlanIdsFromMemberPlan(plans: PlanLike[], planId?: string | null) {
