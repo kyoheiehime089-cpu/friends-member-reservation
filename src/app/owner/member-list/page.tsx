@@ -1,1 +1,5 @@
-export { default } from '@/app/admin/members/page';
+import { MemberPlanManagerClient } from '@/components/MemberPlanManagerClient';
+
+export default function Page() {
+  return <MemberPlanManagerClient />;
+}
