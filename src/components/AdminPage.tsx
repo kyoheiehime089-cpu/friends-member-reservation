@@ -9,18 +9,18 @@ function OwnerShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-20 border-b border-gray-800 bg-gray-950 text-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3">
-          <Link href="/owner" className="shrink-0 font-black text-yellow-300">friends 管理者</Link>
-          <nav className="flex gap-3 overflow-x-auto whitespace-nowrap text-xs font-black sm:text-sm">
-            <Link href="/owner/members">会員作成</Link>
-            <Link href="/owner/member-list">会員一覧</Link>
+        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+          <Link href="/owner/reservations" className="shrink-0 font-black text-yellow-300">friends 管理者</Link>
+          <nav className="flex flex-1 gap-3 overflow-x-auto whitespace-nowrap text-xs font-black sm:text-sm">
+            <Link href="/owner/reservations">予約一覧</Link>
             <Link href="/owner/manual-reservation">管理予約</Link>
             <Link href="/owner/schedules">予約枠</Link>
             <Link href="/owner/slot-bulk">一括変更</Link>
             <Link href="/owner/bulk-plan">プラン一括</Link>
+            <Link href="/owner/members">会員作成</Link>
+            <Link href="/owner/member-list">会員一覧</Link>
             <Link href="/owner/plans">プラン</Link>
             <Link href="/owner/menus">メニュー</Link>
-            <Link href="/owner/reservations">予約一覧</Link>
           </nav>
         </div>
       </header>
