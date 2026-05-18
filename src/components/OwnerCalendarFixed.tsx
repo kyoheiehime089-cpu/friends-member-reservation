@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { AdminPage } from '@/components/AdminPage';
-import { CalendarDayHeader } from '@/components/CalendarDayHeader';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -10,196 +9,385 @@ type Reservation = { id: string; status: string; memberName: string; memberEmail
 type Slot = { id: string; startsAt: string | null; endsAt: string | null; menuName: string; capacity: number; booked: number; isOpen: boolean; reservations: Reservation[] };
 type Member = { id: string; full_name: string | null; email: string | null };
 type Menu = { id: string; name: string; default_capacity: number };
-type Modal = { dateKey: string; time: string; slots: Slot[] } | null;
+type ModalState = { dateKey: string; time: string; slots: Slot[] } | null;
 
 const zone = 'Asia/Tokyo';
 const keyFmt = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: zone });
 const dateFmt = new Intl.DateTimeFormat('ja-JP', { month: 'numeric', day: 'numeric', timeZone: zone });
-const weekFmt = new Intl.DateTimeFormat('ja-JP', { weekday: 'short', timeZone: zone });
+const weekdayFmt = new Intl.DateTimeFormat('ja-JP', { weekday: 'short', timeZone: zone });
 const monthFmt = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', timeZone: zone });
 const timeFmt = new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone });
 
-function today() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
-function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-function addMonths(d: Date, n: number) { const x = new Date(d); x.setMonth(x.getMonth() + n); return x; }
-function weekStart(d: Date) { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); x.setHours(0, 0, 0, 0); return x; }
-function monthGridStart(d: Date) { return weekStart(new Date(d.getFullYear(), d.getMonth(), 1)); }
-function keyOf(v: Date | string | null) { return v ? keyFmt.format(typeof v === 'string' ? new Date(v) : v) : ''; }
-function timeOf(v: string | null) { return v ? timeFmt.format(new Date(v)) : ''; }
-function inputDate(d: Date) { return keyFmt.format(d); }
-function addMinutes(t: string, m: number) { const [h, min] = t.split(':').map(Number); const d = new Date(2000, 0, 1, h, min + m); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
-function timeRows() { const a: string[] = []; for (let t = '09:00'; t <= '22:30'; t = addMinutes(t, 30)) a.push(t); return a; }
-function active(slot: Slot) { return slot.reservations.filter((r) => r.status !== 'cancelled'); }
-function shortName(v: string) { return (v || '名前未設定').replace(/\s+/g, '').slice(0, 12); }
-function color(menu: string) { if (menu.includes('ヨガ')) return 'bg-purple-600 text-white'; if (menu.includes('イベント') || menu.includes('セミナー') || menu.includes('座学')) return 'bg-red-600 text-white'; return 'bg-blue-700 text-white'; }
+function today() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function weekStart(date: Date) {
+  const next = new Date(date);
+  next.setDate(next.getDate() - ((next.getDay() + 6) % 7));
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function monthGridStart(date: Date) {
+  return weekStart(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+function dateKey(value: Date | string | null) {
+  if (!value) return '';
+  return keyFmt.format(typeof value === 'string' ? new Date(value) : value);
+}
+
+function timeKey(value: string | null) {
+  if (!value) return '';
+  return timeFmt.format(new Date(value));
+}
+
+function addMinutes(time: string, minutes: number) {
+  const [hour, minute] = time.split(':').map(Number);
+  const d = new Date(2000, 0, 1, hour, minute + minutes);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function timeRows() {
+  const rows: string[] = [];
+  for (let time = '09:00'; time <= '22:30'; time = addMinutes(time, 30)) rows.push(time);
+  return rows;
+}
+
+function active(slot: Slot) {
+  return slot.reservations.filter((reservation) => reservation.status !== 'cancelled');
+}
+
+function shortName(name: string) {
+  return (name || '名前未設定').replace(/\s+/g, '').slice(0, 10);
+}
+
+function cellColor(menuName: string) {
+  if (menuName.includes('ヨガ')) return 'bg-purple-600 text-white';
+  if (menuName.includes('イベント') || menuName.includes('セミナー') || menuName.includes('座学')) return 'bg-red-600 text-white';
+  return 'bg-blue-700 text-white';
+}
 
 export function OwnerCalendarFixed() {
   const [view, setView] = useState<ViewMode>('week');
-  const [base, setBase] = useState<Date>(() => today());
+  const [baseDate, setBaseDate] = useState<Date>(() => today());
   const [slots, setSlots] = useState<Slot[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [menus, setMenus] = useState<Menu[]>([]);
-  const [modal, setModal] = useState<Modal>(null);
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState('');
+  const [modal, setModal] = useState<ModalState>(null);
   const [memberId, setMemberId] = useState('');
   const [menuId, setMenuId] = useState('');
   const [slotId, setSlotId] = useState('');
   const [minutes, setMinutes] = useState(40);
   const [capacity, setCapacity] = useState(5);
-  const [moveTo, setMoveTo] = useState<Record<string, string>>({});
-  const [search, setSearch] = useState('');
-  const [suggest, setSuggest] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const range = useMemo(() => {
-    if (view === 'day') { const s = new Date(base); s.setHours(0, 0, 0, 0); return { start: s, end: addDays(s, 1) }; }
-    if (view === 'month') { const s = monthGridStart(base); return { start: s, end: addDays(s, 42) }; }
-    const s = weekStart(base); return { start: s, end: addDays(s, 7) };
-  }, [base, view]);
-  const days = useMemo(() => Array.from({ length: view === 'day' ? 1 : view === 'month' ? 42 : 7 }, (_, i) => addDays(range.start, i)), [range.start, view]);
-  const rangeLabel = view === 'day' ? `${dateFmt.format(days[0])}（${weekFmt.format(days[0])}）` : view === 'month' ? monthFmt.format(base) : `${dateFmt.format(days[0])}〜${dateFmt.format(days[days.length - 1])}`;
+    if (view === 'day') {
+      const start = new Date(baseDate);
+      start.setHours(0, 0, 0, 0);
+      return { start, end: addDays(start, 1) };
+    }
+    if (view === 'month') {
+      const start = monthGridStart(baseDate);
+      return { start, end: addDays(start, 42) };
+    }
+    const start = weekStart(baseDate);
+    return { start, end: addDays(start, 7) };
+  }, [baseDate, view]);
+
+  const days = useMemo(() => {
+    const length = view === 'day' ? 1 : view === 'month' ? 42 : 7;
+    return Array.from({ length }, (_, index) => addDays(range.start, index));
+  }, [range.start, view]);
 
   async function token() {
-    const c = getSupabaseClient();
-    if (!c) return '';
-    const { data } = await c.auth.getSession();
+    const client = getSupabaseClient();
+    if (!client) return '';
+    const { data } = await client.auth.getSession();
     return data.session?.access_token ?? '';
   }
 
   async function adminFetch(path: string, init?: RequestInit) {
-    const t = await token();
-    if (!t) throw new Error('管理者としてログインしてください。');
-    return fetch(path, { ...init, headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' }, cache: 'no-store' });
+    const accessToken = await token();
+    if (!accessToken) throw new Error('管理者としてログインしてください。');
+    return fetch(path, {
+      ...init,
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      cache: 'no-store'
+    });
   }
 
   async function load() {
     try {
-      const [calRes, memRes, menuRes] = await Promise.all([
+      const [calendarResponse, memberResponse, menuResponse] = await Promise.all([
         adminFetch(`/api/admin/calendar?start=${encodeURIComponent(range.start.toISOString())}&end=${encodeURIComponent(range.end.toISOString())}`),
         adminFetch('/api/admin/members'),
         adminFetch('/api/admin/menus')
       ]);
-      const cal = await calRes.json().catch(() => ({})) as { ok?: boolean; message?: string; slots?: Slot[] };
-      const mem = await memRes.json().catch(() => ({})) as { ok?: boolean; message?: string; members?: Member[] };
-      const menu = await menuRes.json().catch(() => ({})) as { ok?: boolean; message?: string; menus?: Menu[] };
-      if (!calRes.ok || !cal.ok) throw new Error(cal.message ?? 'カレンダー取得に失敗しました。');
-      if (!memRes.ok || !mem.ok) throw new Error(mem.message ?? '会員取得に失敗しました。');
-      if (!menuRes.ok || !menu.ok) throw new Error(menu.message ?? 'メニュー取得に失敗しました。');
-      setSlots(cal.slots ?? []);
-      setMembers(mem.members ?? []);
-      setMenus(menu.menus ?? []);
-      setMemberId((v) => v || mem.members?.[0]?.id || '');
-      setMenuId((v) => v || menu.menus?.[0]?.id || '');
-      setCapacity((v) => v || menu.menus?.[0]?.default_capacity || 5);
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : '読み込みに失敗しました。');
+      const calendarBody = await calendarResponse.json().catch(() => ({})) as { ok?: boolean; message?: string; slots?: Slot[] };
+      const memberBody = await memberResponse.json().catch(() => ({})) as { ok?: boolean; message?: string; members?: Member[] };
+      const menuBody = await menuResponse.json().catch(() => ({})) as { ok?: boolean; message?: string; menus?: Menu[] };
+      if (!calendarResponse.ok || !calendarBody.ok) throw new Error(calendarBody.message ?? '予約カレンダーの取得に失敗しました。');
+      if (!memberResponse.ok || !memberBody.ok) throw new Error(memberBody.message ?? '会員一覧の取得に失敗しました。');
+      if (!menuResponse.ok || !menuBody.ok) throw new Error(menuBody.message ?? 'メニュー一覧の取得に失敗しました。');
+      const nextMembers = memberBody.members ?? [];
+      const nextMenus = menuBody.menus ?? [];
+      setSlots(calendarBody.slots ?? []);
+      setMembers(nextMembers);
+      setMenus(nextMenus);
+      setMemberId((current) => current || nextMembers[0]?.id || '');
+      setMenuId((current) => current || nextMenus[0]?.id || '');
+      setCapacity((current) => current || nextMenus[0]?.default_capacity || 5);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '読み込みに失敗しました。');
     }
   }
 
-  useEffect(() => { void load(); }, [range.start, range.end]);
+  useEffect(() => {
+    void load();
+  }, [range.start, range.end]);
 
-  const keyword = search.trim().toLowerCase();
-  const memberSuggestions = useMemo(() => suggest ? members.filter((m) => !keyword || `${m.full_name ?? ''} ${m.email ?? ''}`.toLowerCase().includes(keyword)).slice(0, 8) : [], [members, keyword, suggest]);
-  const visibleSlots = useMemo(() => {
-    if (!keyword) return slots;
-    return slots.map((slot) => ({ ...slot, reservations: slot.reservations.filter((r) => `${r.memberName} ${r.memberEmail} ${slot.menuName}`.toLowerCase().includes(keyword)) })).filter((slot) => slot.reservations.length || slot.menuName.toLowerCase().includes(keyword));
-  }, [slots, keyword]);
-  const slotsByCell = useMemo(() => {
+  const slotMap = useMemo(() => {
     const map = new Map<string, Slot[]>();
-    visibleSlots.forEach((s) => { const k = `${keyOf(s.startsAt)}-${timeOf(s.startsAt)}`; map.set(k, [...(map.get(k) ?? []), s]); });
+    slots.forEach((slot) => {
+      const key = `${dateKey(slot.startsAt)}-${timeKey(slot.startsAt)}`;
+      map.set(key, [...(map.get(key) ?? []), slot]);
+    });
     return map;
-  }, [visibleSlots]);
+  }, [slots]);
+
   const slotsByDay = useMemo(() => {
     const map = new Map<string, Slot[]>();
-    visibleSlots.forEach((s) => { const k = keyOf(s.startsAt); map.set(k, [...(map.get(k) ?? []), s]); });
+    slots.forEach((slot) => {
+      const key = dateKey(slot.startsAt);
+      map.set(key, [...(map.get(key) ?? []), slot]);
+    });
     return map;
-  }, [visibleSlots]);
-  const times = useMemo(() => Array.from(new Set([...timeRows(), ...visibleSlots.map((s) => timeOf(s.startsAt))].filter(Boolean))).sort(), [visibleSlots]);
-  const moveOptions = useMemo(() => slots.filter((s) => s.isOpen && s.startsAt && new Date(s.startsAt).getTime() > Date.now()).sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt))), [slots]);
+  }, [slots]);
 
-  function openCell(dateKey: string, time: string, cellSlots: Slot[]) {
-    setModal({ dateKey, time, slots: cellSlots });
+  const times = useMemo(() => {
+    return Array.from(new Set([...timeRows(), ...slots.map((slot) => timeKey(slot.startsAt))].filter(Boolean))).sort();
+  }, [slots]);
+
+  function openCell(day: Date, time: string, cellSlots: Slot[]) {
+    setModal({ dateKey: dateKey(day), time, slots: cellSlots });
     setSlotId(cellSlots[0]?.id ?? '');
-    const matchedMenu = cellSlots[0] ? menus.find((m) => m.name === cellSlots[0].menuName) : menus[0];
-    setMenuId(matchedMenu?.id ?? menus[0]?.id ?? '');
-    setCapacity(matchedMenu?.default_capacity ?? 5);
+    const menu = cellSlots[0] ? menus.find((item) => item.name === cellSlots[0].menuName) : menus[0];
+    setMenuId(menu?.id ?? menus[0]?.id ?? '');
+    setCapacity(menu?.default_capacity ?? 5);
     setNotice('');
   }
 
   async function book() {
-    if (!modal || !memberId) { setNotice('会員を選択してください。'); return; }
-    const existing = modal.slots.find((s) => s.id === slotId);
-    const body = existing ? { memberId, slotId: existing.id } : { memberId, menuId, date: modal.dateKey, time: modal.time, minutes, capacity };
-    setBusy('reserve');
+    if (!modal) return;
+    if (!memberId) return setNotice('会員を選択してください。');
+    const selectedSlot = modal.slots.find((slot) => slot.id === slotId);
+    const body = selectedSlot
+      ? { memberId, slotId: selectedSlot.id }
+      : { memberId, menuId, date: modal.dateKey, time: modal.time, minutes, capacity };
+    setBusy(true);
     setNotice('予約を保存しています。');
     try {
-      const endpoint = existing ? '/api/admin/book-slot' : '/api/admin/manual-reservation';
-      const res = await adminFetch(endpoint, { method: 'POST', body: JSON.stringify(body) });
-      const data = await res.json().catch(() => ({})) as { ok?: boolean; message?: string };
-      if (!res.ok || !data.ok) throw new Error(data.message ?? '予約に失敗しました。');
-      setNotice(data.message ?? '予約を入れました。');
+      const response = await adminFetch(selectedSlot ? '/api/admin/book-slot' : '/api/admin/manual-reservation', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      const result = await response.json().catch(() => ({})) as { ok?: boolean; message?: string };
+      if (!response.ok || !result.ok) throw new Error(result.message ?? '予約に失敗しました。');
+      setNotice(result.message ?? '予約を入れました。');
       setModal(null);
       await load();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : '予約に失敗しました。');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '予約に失敗しました。');
     } finally {
-      setBusy('');
+      setBusy(false);
     }
   }
 
-  async function cancel(reservationId: string) {
-    setBusy(reservationId);
+  async function cancelReservation(reservationId: string) {
+    setBusy(true);
     try {
-      const res = await adminFetch('/api/admin/reservation-cancel', { method: 'POST', body: JSON.stringify({ reservationId }) });
-      const data = await res.json().catch(() => ({})) as { ok?: boolean; message?: string };
-      if (!res.ok || !data.ok) throw new Error(data.message ?? 'キャンセルに失敗しました。');
+      const response = await adminFetch('/api/admin/reservation-cancel', {
+        method: 'POST',
+        body: JSON.stringify({ reservationId })
+      });
+      const result = await response.json().catch(() => ({})) as { ok?: boolean; message?: string };
+      if (!response.ok || !result.ok) throw new Error(result.message ?? 'キャンセルに失敗しました。');
       setNotice('予約をキャンセルしました。');
       setModal(null);
       await load();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'キャンセルに失敗しました。');
-    } finally { setBusy(''); }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'キャンセルに失敗しました。');
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function move(reservationId: string) {
-    const targetSlotId = moveTo[reservationId];
-    if (!targetSlotId) { setNotice('移動先を選択してください。'); return; }
-    setBusy(`move-${reservationId}`);
-    try {
-      const res = await adminFetch('/api/admin/reservation-move', { method: 'POST', body: JSON.stringify({ reservationId, targetSlotId }) });
-      const data = await res.json().catch(() => ({})) as { ok?: boolean; message?: string };
-      if (!res.ok || !data.ok) throw new Error(data.message ?? '移動に失敗しました。');
-      setNotice('予約を移動しました。');
-      setModal(null);
-      await load();
-    } catch (e) {
-      setNotice(e instanceof Error ? e.message : '移動に失敗しました。');
-    } finally { setBusy(''); }
+  function step(delta: number) {
+    if (view === 'day') setBaseDate((date) => addDays(date, delta));
+    else if (view === 'month') setBaseDate((date) => addMonths(date, delta));
+    else setBaseDate((date) => addDays(date, delta * 7));
   }
 
-  function step(n: number) { if (view === 'day') setBase((d) => addDays(d, n)); else if (view === 'month') setBase((d) => addMonths(d, n)); else setBase((d) => addDays(d, n * 7)); }
-  const prev = view === 'day' ? '前日' : view === 'month' ? '前月' : '前週';
-  const next = view === 'day' ? '翌日' : view === 'month' ? '次月' : '次週';
+  const previousLabel = view === 'day' ? '前日' : view === 'month' ? '前月' : '前週';
+  const nextLabel = view === 'day' ? '翌日' : view === 'month' ? '次月' : '次週';
 
   return (
     <AdminPage title="予約カレンダー" description="">
       <div className="space-y-3">
         <section className="rounded-3xl border bg-white p-3 shadow-sm">
           <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
-            <button onClick={() => setBase((d) => addMonths(d, -1))} className="rounded-full border px-3 py-2 text-xs font-black">前月</button>
-            <div className="text-center"><p className="text-lg font-black">{monthFmt.format(base)}</p><p className="text-xs font-bold text-gray-500">{rangeLabel}</p></div>
-            <button onClick={() => setBase((d) => addMonths(d, 1))} className="rounded-full border px-3 py-2 text-xs font-black">次月</button>
+            <button type="button" onClick={() => setBaseDate((date) => addMonths(date, -1))} className="rounded-full border px-3 py-2 text-xs font-black">前月</button>
+            <div className="text-center">
+              <p className="text-lg font-black">{monthFmt.format(baseDate)}</p>
+              <p className="text-xs font-bold text-gray-500">{dateFmt.format(days[0])}〜{dateFmt.format(days[days.length - 1])}</p>
+            </div>
+            <button type="button" onClick={() => setBaseDate((date) => addMonths(date, 1))} className="rounded-full border px-3 py-2 text-xs font-black">次月</button>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2"><button onClick={() => step(-1)} className="rounded-full border px-2 py-2 text-xs font-black">‹ {prev}</button><button onClick={() => setBase(today())} className="rounded-full bg-yellow-400 px-2 py-2 text-xs font-black">今日</button><button onClick={() => step(1)} className="rounded-full border px-2 py-2 text-xs font-black">{next} ›</button></div>
-          <div className="mt-3 grid grid-cols-4 gap-2">{(['day','week','month'] as const).map((v) => <button key={v} onClick={() => setView(v)} className={`rounded-full px-2 py-2 text-xs font-black ${view === v ? 'bg-gray-900 text-white' : 'border'}`}>{v === 'day' ? '1日' : v === 'week' ? '1週間' : '1ヶ月'}</button>)}<button onClick={() => setBase(today())} className="rounded-full border px-2 py-2 text-xs font-black">現在日</button></div>
-          <details className="mt-2 rounded-2xl border bg-gray-50 p-2 text-xs font-bold"><summary>日付指定</summary><input type="date" value={inputDate(base)} onChange={(e) => setBase(new Date(`${e.target.value}T00:00:00+09:00`))} className="mt-2 w-full rounded-xl border px-3 py-2" /></details>
-          <div className="relative mt-3"><input className="w-full rounded-xl border px-3 py-3 text-sm font-bold" placeholder="会員名・メール・メニューで検索" value={search} onFocus={() => setSuggest(true)} onChange={(e) => setSearch(e.target.value)} />{memberSuggestions.length > 0 && <div className="absolute left-0 right-0 z-30 mt-1 rounded-2xl border bg-white p-2 shadow-lg">{memberSuggestions.map((m) => <button key={m.id} onMouseDown={() => { setSearch(m.full_name || m.email || ''); setSuggest(false); }} className="block w-full rounded-xl px-3 py-2 text-left text-sm font-bold hover:bg-yellow-50">{m.full_name || '名前未設定'}<span className="ml-2 text-xs text-gray-500">{m.email}</span></button>)}</div>}</div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <button type="button" onClick={() => step(-1)} className="rounded-full border px-2 py-2 text-xs font-black">‹ {previousLabel}</button>
+            <button type="button" onClick={() => setBaseDate(today())} className="rounded-full bg-yellow-400 px-2 py-2 text-xs font-black">今日</button>
+            <button type="button" onClick={() => step(1)} className="rounded-full border px-2 py-2 text-xs font-black">{nextLabel} ›</button>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <button type="button" onClick={() => setView('day')} className={`rounded-full px-2 py-2 text-xs font-black ${view === 'day' ? 'bg-gray-900 text-white' : 'border'}`}>1日</button>
+            <button type="button" onClick={() => setView('week')} className={`rounded-full px-2 py-2 text-xs font-black ${view === 'week' ? 'bg-gray-900 text-white' : 'border'}`}>1週間</button>
+            <button type="button" onClick={() => setView('month')} className={`rounded-full px-2 py-2 text-xs font-black ${view === 'month' ? 'bg-gray-900 text-white' : 'border'}`}>1ヶ月</button>
+          </div>
           {notice && <p className="mt-3 rounded-2xl bg-yellow-50 p-3 text-sm font-bold text-yellow-900">{notice}</p>}
         </section>
 
-        {view === 'month' ? <section className="rounded-2xl border bg-white p-1 shadow-sm"><div className="grid grid-cols-7 border-l border-t">{days.map((d) => { const k = keyOf(d); const list = slotsByDay.get(k) ?? []; return <button key={k} onClick={() => openCell(k, '09:00', list)} className="min-h-[92px] border-b border-r p-1 text-left"><p className="text-xs font-black">{dateFmt.format(d)}</p>{list.slice(0, 4).map((s) => <div key={s.id} className={`mt-0.5 truncate rounded px-1 py-0.5 text-[10px] font-black ${active(s).length ? color(s.menuName) : 'bg-gray-100 text-gray-500'}`}>{timeOf(s.startsAt)} {active(s).map((r) => shortName(r.memberName)).join('、') || `空${s.booked}/${s.capacity}`}</div>)}</button>; })}</div></section> : <section className="rounded-2xl border bg-white p-1 shadow-sm"><div className="w-full overflow-x-hidden"><div className="grid w-full border-l border-t" style={{ gridTemplateColumns: `42px repeat(${days.length}, minmax(0,1fr))` }}><div className="border-b border-r p-1 text-center text-[10px] font-black">時間</div>{days.map((d) => <div key={keyOf(d)} className="border-b border-r"><CalendarDayHeader dateKey={keyOf(d)} dateLabel={dateFmt.format(d)} weekdayLabel={weekFmt.format(d)} dense /></div>)}{times.map((t) => <div key={t} className="contents"><div className="min-h-[62px] border-b border-r p-1 text-center text-[10px] font-black">{t}</div>{days.map((d) => { const k = `${keyOf(d)}-${t}`; const list = slotsByCell.get(k) ?? []; return <button key={k} onClick={() => openCell(keyOf(d), t, list)} className="min-h-[62px] overflow-hidden border-b border-r p-0.5 text-left">{list.map((s) => { const a = active(s); return a.length ? <div key={s.id} className="mb-0.5 flex gap-0.5">{a.map((r) => <div key={r.id} className={`min-h-[56px] flex-1 rounded px-0.5 py-1 text-[10px] font-black ${color(s.menuName)}`} style={{ writingMode: 'vertical-rl' }}>{shortName(r.memberName)}</div>)}</div> : <div key={s.id} className="mb-0.5 rounded border border-dashed bg-gray-50 py-1 text-center text-[9px] font-bold text-gray-400">空{s.booked}/{s.capacity}</div>; })}</button>; })}</div>)}</div></div></section>}
+        {view === 'month' ? (
+          <section className="rounded-2xl border bg-white p-1 shadow-sm">
+            <div className="grid grid-cols-7 border-l border-t">
+              {days.map((day) => {
+                const list = slotsByDay.get(dateKey(day)) ?? [];
+                return (
+                  <button key={dateKey(day)} type="button" onClick={() => openCell(day, '09:00', list)} className="min-h-[92px] border-b border-r p-1 text-left">
+                    <p className="text-xs font-black">{dateFmt.format(day)}</p>
+                    {list.slice(0, 4).map((slot) => (
+                      <div key={slot.id} className="mt-0.5 truncate rounded bg-gray-100 px-1 py-0.5 text-[10px] font-black text-gray-700">
+                        {timeKey(slot.startsAt)} {active(slot).map((row) => shortName(row.memberName)).join('、') || `空${slot.booked}/${slot.capacity}`}
+                      </div>
+                    ))}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-2xl border bg-white p-1 shadow-sm">
+            <div className="w-full overflow-x-hidden">
+              <div className="grid w-full border-l border-t" style={{ gridTemplateColumns: `42px repeat(${days.length}, minmax(0, 1fr))` }}>
+                <div className="border-b border-r p-1 text-center text-[10px] font-black">時間</div>
+                {days.map((day) => (
+                  <div key={dateKey(day)} className="border-b border-r p-1 text-center text-[10px] font-black">
+                    {dateFmt.format(day)}<br />{weekdayFmt.format(day)}
+                  </div>
+                ))}
+                {times.map((time) => (
+                  <div key={time} className="contents">
+                    <div className="min-h-[62px] border-b border-r p-1 text-center text-[10px] font-black">{time}</div>
+                    {days.map((day) => {
+                      const key = `${dateKey(day)}-${time}`;
+                      const list = slotMap.get(key) ?? [];
+                      return (
+                        <button key={key} type="button" onClick={() => openCell(day, time, list)} className="min-h-[62px] overflow-hidden border-b border-r p-0.5 text-left">
+                          {list.map((slot) => {
+                            const activeRows = active(slot);
+                            if (!activeRows.length) {
+                              return <div key={slot.id} className="rounded border border-dashed bg-gray-50 py-1 text-center text-[9px] font-bold text-gray-400">空{slot.booked}/{slot.capacity}</div>;
+                            }
+                            return (
+                              <div key={slot.id} className="mb-0.5 flex gap-0.5">
+                                {activeRows.map((row) => (
+                                  <div key={row.id} className={`min-h-[56px] flex-1 rounded px-0.5 py-1 text-[10px] font-black ${cellColor(slot.menuName)}`} style={{ writingMode: 'vertical-rl' }}>
+                                    {shortName(row.memberName)}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
-        {modal && <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center"><div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-4 shadow-xl"><div className="flex justify-between"><p className="text-xl font-black">{modal.dateKey} {modal.time}</p><button onClick={() => setModal(null)} className="rounded-full border px-3 py-1 font-black">×</button></div><div className="mt-4 space-y-3">{modal.slots.map((s) => <div key={s.id} className="rounded-2xl border p-3"><p className="font-black">{timeOf(s.startsAt)} {s.menuName} {s.booked}/{s.capacity}名</p>{active(s).length === 0 && <p className="mt-2 rounded-xl bg-gray-50 p-2 text-sm font-bold text-gray-500">予約者はいません。</p>}{active(s).map((r) => <div key={r.id} className="mt-2 rounded-xl bg-gray-50 p-2"><div className="flex justify-between gap-2"><span className="text-sm font-black">{r.memberName}<span className="ml-1 text-xs text-gray-500">{r.planName}</span></span><button disabled={busy === r.id} onClick={() => void cancel(r.id)} className="rounded-full border border-red-300 px-3 py-1 text-xs font-black text-red-600">キャンセル</button></div><div className="mt-2 grid grid-cols-[1fr_auto] gap-2"><select value={moveTo[r.id] ?? ''} onChange={(e) => setMoveTo((v) => ({ ...v, [r.id]: e.target.value }))} className="rounded-xl border px-2 py-2 text-xs font-bold"><option value="">移動先</option>{moveOptions.filter((o) => o.id !== s.id).map((o) => <option key={o.id} value={o.id}>{dateFmt.format(new Date(o.startsAt || ''))} {timeOf(o.startsAt)} {o.menuName}</option>)}</select><button onClick={() => void move(r.id)} className="rounded-xl bg-blue-600 px-3 py-2 text-xs font-black text-white">移動</button></div></div>))}</div>)}<div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3"><p className="font-black">代理予約</p><div className="mt-3 grid gap-2"><select value={memberId} onChange={(e) => setMemberId(e.target.value)} className="rounded-xl border px-3 py-2 font-bold"><option value="">会員を選択</option>{members.map((m) => <option key={m.id} value={m.id}>{m.full_name || m.email}</option>)}</select>{modal.slots.length > 0 && <select value={slotId} onChange={(e) => setSlotId(e.target.value)} className="rounded-xl border px-3 py-2 font-bold"><option value="">新規枠を作る</option>{modal.slots.map((s) => <option key={s.id} value={s.id}>{timeOf(s.startsAt)} {s.menuName} {s.booked}/{s.capacity}</option>)}</select>}{!slotId && <><select value={menuId} onChange={(e) => { setMenuId(e.target.value); setCapacity(menus.find((m) => m.id === e.target.value)?.default_capacity ?? 5); }} className="rounded-xl border px-3 py-2 font-bold">{menus.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select><div className="grid grid-cols-2 gap-2"><input type="number" min="5" value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className="rounded-xl border px-3 py-2" /><input type="number" min="1" value={capacity} onChange={(e) => setCapacity(Number(e.target.value))} className="rounded-xl border px-3 py-2" /></div></>}<button disabled={busy === 'reserve'} onClick={() => void book()} className="rounded-full bg-yellow-400 px-4 py-3 font-black disabled:opacity-50">{busy === 'reserve' ? '予約中' : '予約を入れる'}</button></div></div></div></div></div>}
+        {modal && (
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center">
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <p className="text-xl font-black">{modal.dateKey} {modal.time}</p>
+                <button type="button" onClick={() => setModal(null)} className="rounded-full border px-3 py-1 font-black">×</button>
+              </div>
+              <div className="mt-4 space-y-3">
+                {modal.slots.map((slot) => (
+                  <div key={slot.id} className="rounded-2xl border p-3">
+                    <p className="font-black">{timeKey(slot.startsAt)} {slot.menuName} {slot.booked}/{slot.capacity}名</p>
+                    {active(slot).length === 0 && <p className="mt-2 rounded-xl bg-gray-50 p-2 text-sm font-bold text-gray-500">予約者はいません。</p>}
+                    {active(slot).map((row) => (
+                      <div key={row.id} className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-gray-50 p-2">
+                        <span className="text-sm font-black">{row.memberName}</span>
+                        <button type="button" disabled={busy} onClick={() => void cancelReservation(row.id)} className="rounded-full border border-red-300 px-3 py-1 text-xs font-black text-red-600">キャンセル</button>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3">
+                  <p className="font-black">代理予約</p>
+                  <div className="mt-3 grid gap-2">
+                    <select value={memberId} onChange={(event) => setMemberId(event.target.value)} className="rounded-xl border px-3 py-2 font-bold">
+                      <option value="">会員を選択</option>
+                      {members.map((member) => <option key={member.id} value={member.id}>{member.full_name || member.email || member.id}</option>)}
+                    </select>
+                    {modal.slots.length > 0 && (
+                      <select value={slotId} onChange={(event) => setSlotId(event.target.value)} className="rounded-xl border px-3 py-2 font-bold">
+                        <option value="">新規枠を作る</option>
+                        {modal.slots.map((slot) => <option key={slot.id} value={slot.id}>{timeKey(slot.startsAt)} {slot.menuName} {slot.booked}/{slot.capacity}</option>)}
+                      </select>
+                    )}
+                    {!slotId && (
+                      <>
+                        <select value={menuId} onChange={(event) => setMenuId(event.target.value)} className="rounded-xl border px-3 py-2 font-bold">
+                          {menus.map((menu) => <option key={menu.id} value={menu.id}>{menu.name}</option>)}
+                        </select>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input type="number" min="5" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} className="rounded-xl border px-3 py-2" />
+                          <input type="number" min="1" value={capacity} onChange={(event) => setCapacity(Number(event.target.value))} className="rounded-xl border px-3 py-2" />
+                        </div>
+                      </>
+                    )}
+                    <button type="button" disabled={busy} onClick={() => void book()} className="rounded-full bg-yellow-400 px-4 py-3 font-black disabled:opacity-50">
+                      {busy ? '予約中' : '予約を入れる'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AdminPage>
   );
