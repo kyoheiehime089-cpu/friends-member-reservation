@@ -75,26 +75,37 @@ export function AdminScheduleRows({ slots, menus, counts, onSaved, onMessage }: 
     await onSaved();
   }
 
+  async function getStoreId() {
+    const client = getSupabaseClient();
+    if (!client) return null;
+    const { data, error } = await client.from('stores').select('id').order('created_at', { ascending: true }).limit(1);
+    if (error) throw new Error(`店舗情報の取得に失敗しました: ${error.message}`);
+    if (data?.[0]?.id) return data[0].id as string;
+    const created = await client.from('stores').insert({ name: 'friends 行徳' }).select('id').single();
+    if (created.error) throw new Error(`店舗情報の作成に失敗しました: ${created.error.message}`);
+    return created.data.id as string;
+  }
+
   async function createSlot() {
     const client = getSupabaseClient();
     if (!client || !newDraft.menuId) return;
     setSavingId('new');
-    const startsAt = toLocalIso(newDraft.date, newDraft.time);
-    const { data: stores, error: storeError } = await client.from('stores').select('id').eq('name', 'friends 行徳').limit(1);
-    if (storeError || !stores?.[0]) {
-      onMessage(`店舗情報の取得に失敗しました: ${storeError?.message ?? 'friends 行徳 が見つかりません'}`);
-      setSavingId(null);
-      return;
+    try {
+      const storeId = await getStoreId();
+      if (!storeId) throw new Error('店舗情報が見つかりません。');
+      const startsAt = toLocalIso(newDraft.date, newDraft.time);
+      const { error } = await client.from('reservation_slots').insert({
+        store_id: storeId,
+        menu_id: newDraft.menuId,
+        starts_at: startsAt,
+        ends_at: new Date(new Date(startsAt).getTime() + newDraft.minutes * 60000).toISOString(),
+        capacity: newDraft.capacity,
+        is_open: newDraft.isOpen
+      });
+      onMessage(error ? `予約枠の作成に失敗しました: ${error.message}` : '予約枠を作成しました。');
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : '予約枠の作成に失敗しました。');
     }
-    const { error } = await client.from('reservation_slots').insert({
-      store_id: stores[0].id,
-      menu_id: newDraft.menuId,
-      starts_at: startsAt,
-      ends_at: new Date(new Date(startsAt).getTime() + newDraft.minutes * 60000).toISOString(),
-      capacity: newDraft.capacity,
-      is_open: newDraft.isOpen
-    });
-    onMessage(error ? `予約枠の作成に失敗しました: ${error.message}` : '予約枠を作成しました。');
     setSavingId(null);
     await onSaved();
   }
