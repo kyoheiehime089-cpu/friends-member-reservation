@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { adminFetch } from '@/lib/adminClient';
 
 function OwnerShell({ children }: { children: ReactNode }) {
   return (
@@ -46,22 +47,20 @@ export function AdminPage({ title, description, children }: { title: string; des
         return;
       }
 
-      const { data } = await client.auth.getSession();
-      const token = data.session?.access_token;
-      if (!token) {
+      try {
+        const response = await adminFetch('/api/admin/me');
+        const result = await response.json().catch(() => ({})) as { ok?: boolean; message?: string };
         if (mounted) {
-          setMessage('管理者としてサインインしてください。');
+          setAllowed(response.ok && result.ok === true);
+          setMessage(result.message ?? (response.ok ? 'OK' : '管理者権限がありません。'));
           setChecking(false);
         }
-        return;
-      }
-
-      const response = await fetch('/api/admin/me', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
-      const result = await response.json().catch(() => ({})) as { ok?: boolean; message?: string };
-      if (mounted) {
-        setAllowed(response.ok && result.ok === true);
-        setMessage(result.message ?? '管理者権限がありません。');
-        setChecking(false);
+      } catch (error) {
+        if (mounted) {
+          setAllowed(false);
+          setMessage(error instanceof Error ? error.message : '管理者としてサインインしてください。');
+          setChecking(false);
+        }
       }
     }
     void check();
