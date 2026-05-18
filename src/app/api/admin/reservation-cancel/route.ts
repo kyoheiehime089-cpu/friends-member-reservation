@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { createServiceClient, requireAdmin, uuidPattern } from '@/lib/adminServer';
+import { createServiceClient, requireAdmin } from '@/lib/adminServer';
+import { cancelAdminReservation } from '@/lib/adminReservations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,21 +9,15 @@ type Body = { reservationId?: string };
 
 export async function POST(request: Request) {
   const admin = await requireAdmin(request);
-  if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
+  if (!admin.ok || !admin.config || !admin.adminId) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
 
   const body = await request.json().catch(() => ({})) as Body;
-  const reservationId = body.reservationId?.trim();
-  if (!reservationId || !uuidPattern.test(reservationId)) return NextResponse.json({ ok: false, message: 'reservationId が不正です。' }, { status: 400 });
-
   const db = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
-  const { data, error } = await db
-    .from('reservations')
-    .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: admin.adminId })
-    .eq('id', reservationId)
-    .select('id,status,cancelled_at')
-    .single();
-
-  if (error) return NextResponse.json({ ok: false, message: `キャンセル処理に失敗しました: ${error.message}` }, { status: 400 });
-  if (data.status !== 'cancelled') return NextResponse.json({ ok: false, message: 'キャンセル状態に更新できませんでした。' }, { status: 400 });
-  return NextResponse.json({ ok: true, reservation: data, message: '予約をキャンセルしました。' });
+  try {
+    const reservation = await cancelAdminReservation(db, body.reservationId?.trim() ?? '', admin.adminId);
+    if (reservation.status !== 'cancelled') return NextResponse.json({ ok: false, message: 'キャンセル状態に更新できませんでした。' }, { status: 400 });
+    return NextResponse.json({ ok: true, reservation, message: '予約をキャンセルしました。' });
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'キャンセル処理に失敗しました。' }, { status: 400 });
+  }
 }

@@ -91,6 +91,7 @@ export function OwnerCalendarFixed() {
   const [menus, setMenus] = useState<Menu[]>([]);
   const [modal, setModal] = useState<ModalState>(null);
   const [memberId, setMemberId] = useState('');
+  const [memberSearch, setMemberSearch] = useState('');
   const [menuId, setMenuId] = useState('');
   const [slotId, setSlotId] = useState('');
   const [minutes, setMinutes] = useState(40);
@@ -186,12 +187,19 @@ export function OwnerCalendarFixed() {
     return Array.from(new Set([...timeRows(), ...slots.map((slot) => timeKey(slot.startsAt))].filter(Boolean))).sort();
   }, [slots]);
 
+  const visibleMembers = useMemo(() => {
+    const keyword = memberSearch.trim().toLowerCase();
+    if (!keyword) return members.slice(0, 80);
+    return members.filter((member) => `${member.full_name ?? ''} ${member.email ?? ''}`.toLowerCase().includes(keyword)).slice(0, 80);
+  }, [memberSearch, members]);
+
   function openCell(day: Date, time: string, cellSlots: Slot[]) {
     setModal({ dateKey: dateKey(day), time, slots: cellSlots });
     setSlotId(cellSlots[0]?.id ?? '');
     const menu = cellSlots[0] ? menus.find((item) => item.name === cellSlots[0].menuName) : menus[0];
     setMenuId(menu?.id ?? menus[0]?.id ?? '');
     setCapacity(menu?.default_capacity ?? 5);
+    setMemberSearch('');
     setNotice('');
   }
 
@@ -358,9 +366,15 @@ export function OwnerCalendarFixed() {
                 <div className="rounded-2xl border border-yellow-200 bg-yellow-50 p-3">
                   <p className="font-black">代理予約</p>
                   <div className="mt-3 grid gap-2">
-                    <select value={memberId} onChange={(event) => setMemberId(event.target.value)} className="rounded-xl border px-3 py-2 font-bold">
+                    <input
+                      value={memberSearch}
+                      onChange={(event) => setMemberSearch(event.target.value)}
+                      className="rounded-xl border px-3 py-2 font-bold"
+                      placeholder="会員名・メールで検索（押して候補表示）"
+                    />
+                    <select value={memberId} onChange={(event) => setMemberId(event.target.value)} className="rounded-xl border px-3 py-2 font-bold" size={Math.min(Math.max(visibleMembers.length + 1, 3), 6)}>
                       <option value="">会員を選択</option>
-                      {members.map((member) => <option key={member.id} value={member.id}>{member.full_name || member.email || member.id}</option>)}
+                      {visibleMembers.map((member) => <option key={member.id} value={member.id}>{member.full_name || member.email || member.id}</option>)}
                     </select>
                     {modal.slots.length > 0 && (
                       <select value={slotId} onChange={(event) => setSlotId(event.target.value)} className="rounded-xl border px-3 py-2 font-bold">

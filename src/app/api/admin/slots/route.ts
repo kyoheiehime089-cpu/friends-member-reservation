@@ -48,8 +48,7 @@ function slotPayload(body: Body) {
     starts_at: startsAt,
     ends_at: new Date(new Date(startsAt).getTime() + minutes * 60000).toISOString(),
     capacity,
-    is_open: body.isOpen !== false,
-    updated_at: new Date().toISOString()
+    is_open: body.isOpen !== false
   };
 }
 
@@ -100,7 +99,7 @@ export async function DELETE(request: Request) {
   if (countError) return NextResponse.json({ ok: false, message: `予約数の確認に失敗しました: ${countError.message}` }, { status: 400 });
 
   const result = (count ?? 0) > 0
-    ? await db.from('reservation_slots').update({ is_open: false, updated_at: new Date().toISOString() }).eq('id', id).select('id').single()
+    ? await db.from('reservation_slots').update({ is_open: false }).eq('id', id).select('id').single()
     : await db.from('reservation_slots').delete().eq('id', id).select('id').single();
   if (result.error) return NextResponse.json({ ok: false, message: `予約枠の削除に失敗しました: ${result.error.message}` }, { status: 400 });
   return NextResponse.json({ ok: true, message: (count ?? 0) > 0 ? '予約があるため受付停止にしました。' : '予約枠を削除しました。' });

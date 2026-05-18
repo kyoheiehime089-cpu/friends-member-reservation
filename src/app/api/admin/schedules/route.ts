@@ -52,7 +52,7 @@ export async function GET(request: Request) {
     serviceClient.from('menus').select('id,name,default_capacity,is_active').order('name', { ascending: true }),
     serviceClient
       .from('reservation_slots')
-      .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at,updated_at')
+      .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at')
       .gte('starts_at', start.toISOString())
       .lte('starts_at', end.toISOString())
       .order('starts_at', { ascending: true })
@@ -98,7 +98,7 @@ export async function POST(request: Request) {
   const { data, error } = await serviceClient
     .from('reservation_slots')
     .insert({ store_id: storeId, menu_id: menuId, starts_at: startsAt, ends_at: endsAt, capacity, is_open: body.isOpen !== false })
-    .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at,updated_at')
+    .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at')
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `予約枠の作成に失敗しました: ${error.message}` }, { status: 400 });
@@ -113,7 +113,7 @@ export async function PATCH(request: Request) {
   const id = body.id?.trim();
   if (!id || !uuidPattern.test(id)) return NextResponse.json({ ok: false, message: '予約枠IDが不正です。' }, { status: 400 });
 
-  const updatePayload: { menu_id?: string; starts_at?: string; ends_at?: string; capacity?: number; is_open?: boolean; updated_at: string } = { updated_at: new Date().toISOString() };
+  const updatePayload: { menu_id?: string; starts_at?: string; ends_at?: string; capacity?: number; is_open?: boolean } = {};
   if (body.menuId !== undefined) {
     const menuId = body.menuId?.trim();
     if (!menuId || !uuidPattern.test(menuId)) return NextResponse.json({ ok: false, message: 'メニューを正しく選択してください。' }, { status: 400 });
@@ -138,7 +138,7 @@ export async function PATCH(request: Request) {
     .from('reservation_slots')
     .update(updatePayload)
     .eq('id', id)
-    .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at,updated_at')
+    .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at')
     .single();
 
   if (error) return NextResponse.json({ ok: false, message: `予約枠の更新に失敗しました: ${error.message}` }, { status: 400 });
@@ -160,9 +160,9 @@ export async function DELETE(request: Request) {
   if ((reservations ?? []).length > 0) {
     const { data, error } = await serviceClient
       .from('reservation_slots')
-      .update({ is_open: false, updated_at: new Date().toISOString() })
+      .update({ is_open: false })
       .eq('id', id)
-      .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at,updated_at')
+      .select('id,menu_id,starts_at,ends_at,capacity,is_open,created_at')
       .single();
     if (error) return NextResponse.json({ ok: false, message: `予約済み枠の停止に失敗しました: ${error.message}` }, { status: 400 });
     return NextResponse.json({ ok: true, slot: data, deleted: false, message: '予約があるため削除ではなく受付停止にしました。' });

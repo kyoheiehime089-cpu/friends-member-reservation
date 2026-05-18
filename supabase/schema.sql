@@ -68,6 +68,7 @@ create table if not exists public.reservation_slots (
   capacity integer not null check (capacity > 0),
   is_open boolean not null default true,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   unique (menu_id, starts_at)
 );
 
