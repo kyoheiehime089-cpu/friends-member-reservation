@@ -8,7 +8,7 @@ import { normalizeMemberStatus } from '@/lib/memberStatus';
 
 type Member = { id: string; full_name: string | null; email: string | null; status: string | null; plan_id: string | null };
 type Plan = PlanLike & { weekly_limit: number | null; unlimited: boolean | null; is_active: boolean | null };
-type ApiBody = { ok?: boolean; message?: string; members?: Member[]; plans?: Plan[]; member?: Member };
+type ApiBody = { ok?: boolean; message?: string; members?: Member[]; plans?: Plan[]; member?: Member; plan?: Plan };
 
 function planRule(plan: Plan) {
   if (plan.unlimited) return '通い放題';
@@ -81,16 +81,17 @@ export function MemberPlanManagerClient() {
     const cleanIds = Array.from(new Set(planIds.filter(Boolean)));
     if (cleanIds.length === 0) return null;
     if (cleanIds.length === 1) return cleanIds[0];
-    const client = getSupabaseClient();
-    if (!client) throw new Error('Supabase環境変数を設定してください。');
     const name = buildBundlePlanName(plans, cleanIds);
     const existing = plans.find((plan) => plan.name === name);
     if (existing) return existing.id;
-    const { data, error } = await client.from('plans').insert({ name, weekly_limit: null, unlimited: false, is_active: true }).select('id,name,weekly_limit,unlimited,is_active').single();
-    if (error) throw new Error(`組み合わせプランの作成に失敗しました: ${error.message}`);
-    const created = data as Plan;
-    setPlans((current) => [...current, created]);
-    return created.id;
+    const response = await adminFetch('/api/admin/plans', {
+      method: 'POST',
+      body: JSON.stringify({ name, weeklyLimit: null, unlimited: true, isActive: true })
+    });
+    const body = await response.json().catch(() => ({})) as ApiBody;
+    if (!response.ok || !body.ok || !body.plan) throw new Error(body.message ?? '組み合わせプランの作成に失敗しました。');
+    setPlans((current) => [...current, body.plan as Plan]);
+    return body.plan.id;
   }
 
   async function save(member: Member) {
