@@ -26,12 +26,13 @@ type ReservationGridProps = {
   slots: ReservationGridSlot[];
   submittingSlotId: string | null;
   onReserve: (slotId: string) => void;
+  onCancel?: (slotId: string) => void;
   dates?: ReservationGridDate[];
   timeLabels?: string[];
   dense?: boolean;
 };
 
-export function ReservationGrid({ slots, submittingSlotId, onReserve, dates: providedDates, timeLabels, dense = false }: ReservationGridProps) {
+export function ReservationGrid({ slots, submittingSlotId, onReserve, onCancel, dates: providedDates, timeLabels, dense = false }: ReservationGridProps) {
   const dates = (providedDates && providedDates.length > 0
     ? providedDates
     : Array.from(new Map(slots.map((slot) => [slot.dateKey, slot])).values()))
@@ -63,7 +64,7 @@ export function ReservationGrid({ slots, submittingSlotId, onReserve, dates: pro
               <div className={`${dense ? 'min-h-[44px] rounded-lg p-1 text-[11px]' : 'min-h-[68px] rounded-xl p-2 text-xs'} sticky left-0 z-10 flex items-center justify-center bg-white text-center font-black text-gray-950 shadow-sm ring-1 ring-gray-100`}>{time}</div>
               {dates.map((date) => {
                 const slot = slotMap.get(`${date.dateKey}-${time}`) ?? null;
-                return <ReservationCell key={`${date.dateKey}-${time}`} slot={slot} dense={dense} isSubmitting={Boolean(slot && submittingSlotId === slot.id)} onReserve={onReserve} />;
+                return <ReservationCell key={`${date.dateKey}-${time}`} slot={slot} dense={dense} isSubmitting={Boolean(slot && submittingSlotId === slot.id)} onReserve={onReserve} onCancel={onCancel} />;
               })}
             </div>
           ))}
