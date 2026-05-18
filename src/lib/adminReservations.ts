@@ -50,7 +50,7 @@ async function firstStoreId(db: SupabaseClient) {
 }
 
 async function menuNameById(db: SupabaseClient, menuId: string | null | undefined) {
-  if (!menuId) return '';
+  if (!menuId) return { name: '', defaultCapacity: 5 };
   const { data, error } = await db.from('menus').select('name,default_capacity').eq('id', menuId).maybeSingle();
   if (error) throw new Error(`メニュー情報の取得に失敗しました: ${error.message}`);
   return { name: String(data?.name ?? ''), defaultCapacity: Number(data?.default_capacity ?? 5) };
@@ -152,14 +152,54 @@ export async function bookAdminReservation(db: SupabaseClient, body: AdminReserv
 export async function cancelAdminReservation(db: SupabaseClient, reservationId: string, adminId: string) {
   if (!reservationId || !uuidPattern.test(reservationId)) throw new Error('reservationId が不正です。');
 
+  const { data: before, error: beforeError } = await db
+    .from('reservations')
+    .select('id,reservation_slot_id,member_id,status')
+    .eq('id', reservationId)
+    .maybeSingle();
+  if (beforeError) throw new Error(`キャンセル対象の確認に失敗しました: ${beforeError.message}`);
+  if (!before) throw new Error('キャンセル対象の予約が見つかりません。');
+
   const payloadWithAudit = { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: adminId };
-  const first = await db.from('reservations').update(payloadWithAudit).eq('id', reservationId).select('id,status,cancelled_at').single();
-  if (!first.error) return first.data;
-  if (!isMissingColumnError(first.error, 'cancelled_at') && !isMissingColumnError(first.error, 'cancelled_by')) {
-    throw new Error(`キャンセル処理に失敗しました: ${first.error.message}`);
+  const first = await db
+    .from('reservations')
+    .update(payloadWithAudit)
+    .eq('id', reservationId)
+    .select('id,status,cancelled_at,reservation_slot_id,member_id')
+    .single();
+
+  let updated = first.data as { id: string; status: string; cancelled_at?: string | null; reservation_slot_id?: string | null; member_id?: string | null } | null;
+  if (first.error) {
+    if (!isMissingColumnError(first.error, 'cancelled_at') && !isMissingColumnError(first.error, 'cancelled_by')) {
+      throw new Error(`キャンセル処理に失敗しました: ${first.error.message}`);
+    }
+    const fallback = await db
+      .from('reservations')
+      .update({ status: 'cancelled' })
+      .eq('id', reservationId)
+      .select('id,status,reservation_slot_id,member_id')
+      .single();
+    if (fallback.error) throw new Error(`キャンセル処理に失敗しました: ${fallback.error.message}`);
+    updated = fallback.data;
   }
 
-  const fallback = await db.from('reservations').update({ status: 'cancelled' }).eq('id', reservationId).select('id,status').single();
-  if (fallback.error) throw new Error(`キャンセル処理に失敗しました: ${fallback.error.message}`);
-  return fallback.data;
+  if (before.reservation_slot_id && before.member_id) {
+    await db
+      .from('reservations')
+      .update({ status: 'cancelled' })
+      .eq('reservation_slot_id', before.reservation_slot_id)
+      .eq('member_id', before.member_id)
+      .eq('status', 'booked');
+  }
+
+  const { count, error: verifyError } = await db
+    .from('reservations')
+    .select('id', { count: 'exact', head: true })
+    .eq('reservation_slot_id', before.reservation_slot_id)
+    .eq('member_id', before.member_id)
+    .eq('status', 'booked');
+  if (verifyError) throw new Error(`キャンセル後の確認に失敗しました: ${verifyError.message}`);
+  if ((count ?? 0) > 0) throw new Error('キャンセル後も予約済みデータが残っています。もう一度お試しください。');
+
+  return { ...updated, status: 'cancelled', reservation_slot_id: before.reservation_slot_id, member_id: before.member_id };
 }
