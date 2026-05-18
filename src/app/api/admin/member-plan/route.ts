@@ -11,6 +11,14 @@ type Body = {
   status?: string | null;
 };
 
+function statusForDb(status?: string | null) {
+  const value = status?.trim();
+  if (!value) return undefined;
+  if (value === '休止予定' || value === '休止中' || value.startsWith('休止予定:')) return '休会中';
+  if (['有効', '休会中', '退会予定', '退会済み', '停止中', '未払い'].includes(value)) return value;
+  return '有効';
+}
+
 export async function PATCH(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) {
@@ -35,7 +43,8 @@ export async function PATCH(request: Request) {
       plan_id: planId,
       updated_at: new Date().toISOString()
     };
-    if (body.status) updatePayload.status = body.status;
+    const nextStatus = statusForDb(body.status);
+    if (nextStatus) updatePayload.status = nextStatus;
 
     const { data, error } = await db
       .from('members')
