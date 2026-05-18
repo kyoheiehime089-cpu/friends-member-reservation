@@ -11,9 +11,11 @@ export type PlanLike = {
 const separator = '＋';
 
 function planOrder(name: string) {
-  if (name.includes('セミ')) return 0;
+  if (name.includes('セミナー')) return 2;
+  if (name.includes('座学')) return 3;
+  if (name.includes('セミパーソナル') || name.includes('セミパ')) return 0;
   if (name.includes('ヨガ')) return 1;
-  if (name.includes('イベント')) return 2;
+  if (name.includes('イベント')) return 4;
   if (name.includes('その他')) return 9;
   return 5;
 }
@@ -21,11 +23,11 @@ function planOrder(name: string) {
 export function getPlanCategory(name?: string | null) {
   const raw = (name ?? '').trim();
   if (!raw) return '';
-  if (raw.includes('セミ')) return 'セミパーソナル';
-  if (raw.includes('ヨガ')) return 'ヨガ';
-  if (raw.includes('イベント')) return 'イベント';
   if (raw.includes('セミナー')) return 'セミナー';
   if (raw.includes('座学')) return '座学';
+  if (raw.includes('セミパーソナル') || raw.includes('セミパ')) return 'セミパーソナル';
+  if (raw.includes('ヨガ')) return 'ヨガ';
+  if (raw.includes('イベント')) return 'イベント';
   return raw
     .replace(/週\s*\d+\s*回?/g, '')
     .replace(/通い放題/g, '')
@@ -33,6 +35,10 @@ export function getPlanCategory(name?: string | null) {
     .replace(/月\s*\d+\s*回?/g, '')
     .replace(/[（）()]/g, '')
     .trim() || raw;
+}
+
+export function isExclusivePlanCategory(category: string) {
+  return category === 'セミパーソナル' || category === 'ヨガ';
 }
 
 export function isBundlePlanName(name?: string | null) {
@@ -57,7 +63,8 @@ export function selectExclusivePlanIds(plans: PlanLike[], currentIds: string[], 
   const category = getPlanCategory(target.name);
   const nextIds = currentIds.filter((id) => {
     const plan = plans.find((item) => item.id === id);
-    return !plan || getPlanCategory(plan.name) !== category;
+    if (!plan) return false;
+    return !(isExclusivePlanCategory(category) && getPlanCategory(plan.name) === category);
   });
   return [...nextIds, planId];
 }
@@ -103,7 +110,7 @@ export async function ensurePlanForSelection(client: SupabaseClient, planIds: st
 
   const { data: created, error: createError } = await client
     .from('plans')
-    .insert({ name, weekly_limit: null, unlimited: false, is_active: true })
+    .insert({ name, weekly_limit: null, unlimited: true, is_active: true })
     .select('id')
     .single();
 
