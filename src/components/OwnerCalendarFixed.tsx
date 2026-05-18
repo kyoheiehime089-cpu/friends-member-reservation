@@ -33,16 +33,6 @@ function active(slot: Slot) { return slot.reservations.filter((r) => r.status !=
 function shortName(v: string) { return (v || '名前未設定').replace(/\s+/g, '').slice(0, 12); }
 function color(menu: string) { if (menu.includes('ヨガ')) return 'bg-purple-600 text-white'; if (menu.includes('イベント') || menu.includes('セミナー') || menu.includes('座学')) return 'bg-red-600 text-white'; return 'bg-blue-700 text-white'; }
 
-async function withTimeout(responsePromise: Promise<Response>) {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
-  try {
-    return await responsePromise;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
 export function OwnerCalendarFixed() {
   const [view, setView] = useState<ViewMode>('week');
   const [base, setBase] = useState<Date>(() => today());
