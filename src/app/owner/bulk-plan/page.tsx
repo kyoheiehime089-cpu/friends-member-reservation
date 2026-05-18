@@ -7,7 +7,7 @@ import { buildBundlePlanName, selectableBasePlans, selectedPlanIdsFromMemberPlan
 
 type Member = { id: string; full_name: string | null; email: string | null; plan_id: string | null; status: string | null };
 type Plan = PlanLike & { weekly_limit: number | null; unlimited: boolean | null; is_active: boolean | null };
-type ApiBody = { ok?: boolean; message?: string; members?: Member[]; plans?: Plan[]; member?: Member };
+type ApiBody = { ok?: boolean; message?: string; members?: Member[]; plans?: Plan[]; member?: Member; plan?: Plan };
 
 function rule(plan: Plan) { return plan.unlimited ? '通い放題' : typeof plan.weekly_limit === 'number' ? `週${plan.weekly_limit}回` : '個別'; }
 function same(a: string[], b: string[]) { return [...a].sort().join(',') === [...b].sort().join(','); }
@@ -31,7 +31,19 @@ export default function BulkPlanPage() {
   useEffect(() => { void load().catch((e) => setMessage(e instanceof Error ? e.message : '読み込みに失敗しました。')); }, []);
 
   function toggle(id: string) { setPlanIds((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]); }
-  async function ensurePlan(ids: string[]) { if (ids.length === 0) return null; if (ids.length === 1) return ids[0]; const c = getSupabaseClient(); if (!c) throw new Error('Supabase環境変数を設定してください。'); const name = buildBundlePlanName(plans, ids); const found = plans.find((p) => p.name === name); if (found) return found.id; const { data, error } = await c.from('plans').insert({ name, weekly_limit: null, unlimited: false, is_active: true }).select('id,name,weekly_limit,unlimited,is_active').single(); if (error) throw new Error(error.message); const created = data as Plan; setPlans((current) => [...current, created]); return created.id; }
+  async function ensurePlan(ids: string[]) {
+    if (ids.length === 0) return null;
+    if (ids.length === 1) return ids[0];
+    const name = buildBundlePlanName(plans, ids);
+    const found = plans.find((p) => p.name === name);
+    if (found) return found.id;
+    const response = await adminFetch('/api/admin/plans', { method: 'POST', body: JSON.stringify({ name, weeklyLimit: null, unlimited: true, isActive: true }) });
+    const body = await response.json().catch(() => ({})) as ApiBody;
+    if (!response.ok || !body.ok || !body.plan) throw new Error(body.message ?? '組み合わせプランの作成に失敗しました。');
+    const created = body.plan as Plan;
+    setPlans((current) => [...current, created]);
+    return created.id;
+  }
 
   async function apply() {
     if (planIds.length === 0) return setMessage('付けるプランを選択してください。');
@@ -44,7 +56,9 @@ export default function BulkPlanPage() {
         const nextIds = mode === 'replace' ? planIds : Array.from(new Set([...currentIds, ...planIds]));
         const planId = await ensurePlan(nextIds);
         const res = await adminFetch('/api/admin/members', { method: 'PATCH', body: JSON.stringify({ memberId: member.id, planId, status: member.status || '有効' }) });
-        if (res.ok) count += 1;
+        const result = await res.json().catch(() => ({})) as ApiBody;
+        if (!res.ok || !result.ok) throw new Error(result.message ?? '一括反映に失敗しました。');
+        count += 1;
       }
       setMessage(`${count}名にプランを反映しました。`);
       await load();
