@@ -1,5 +1,5 @@
-import { OwnerReservationsCalendar } from '@/components/OwnerReservationsCalendar';
+import { OwnerCalendarV2 } from '@/components/OwnerCalendarV2';
 
 export default function Page() {
-  return <OwnerReservationsCalendar />;
+  return <OwnerCalendarV2 />;
 }
