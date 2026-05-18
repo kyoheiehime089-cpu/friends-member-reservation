@@ -42,7 +42,12 @@ export async function GET(request: Request) {
   const slotIds = slots.map((slot) => slot.id);
   const menuIds = Array.from(new Set(slots.map((slot) => slot.menu_id).filter(Boolean))) as string[];
 
-  const reservations: Reservation[] = slotIds.length ? (((await db.from('reservations').select('id,reservation_slot_id,member_id,status,created_at').in('reservation_slot_id', slotIds)).data ?? []) as Reservation[]) : [];
+  const reservations: Reservation[] = slotIds.length ? (((await db
+    .from('reservations')
+    .select('id,reservation_slot_id,member_id,status,created_at')
+    .in('reservation_slot_id', slotIds)
+    .eq('status', 'booked')).data ?? []) as Reservation[]) : [];
+
   const memberIds = Array.from(new Set(reservations.map((reservation) => reservation.member_id).filter(Boolean))) as string[];
   const members: Member[] = memberIds.length ? (((await db.from('members').select('id,full_name,email,plan_id').in('id', memberIds)).data ?? []) as Member[]) : [];
   const planIds = Array.from(new Set(members.map((member) => member.plan_id).filter(Boolean))) as string[];
@@ -60,7 +65,6 @@ export async function GET(request: Request) {
 
   const calendarSlots = slots.map((slot) => {
     const slotReservations = reservationsBySlot.get(slot.id) ?? [];
-    const activeReservations = slotReservations.filter((reservation) => reservation.status !== 'cancelled');
     const menuName = slot.menu_id ? menuMap.get(slot.menu_id)?.name ?? 'メニュー未設定' : 'メニュー未設定';
     const capacity = effectiveCapacity(menuName, slot.capacity);
     return {
@@ -68,7 +72,7 @@ export async function GET(request: Request) {
       startsAt: slot.starts_at,
       endsAt: slot.ends_at,
       capacity,
-      booked: activeReservations.length,
+      booked: slotReservations.length,
       isOpen: slot.is_open !== false,
       menuName,
       reservations: slotReservations.map((reservation) => {
