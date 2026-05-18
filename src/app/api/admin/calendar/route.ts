@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient, requireAdmin } from '@/lib/adminServer';
+import { effectiveCapacity } from '@/lib/effectiveCapacity';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -60,14 +61,16 @@ export async function GET(request: Request) {
   const calendarSlots = slots.map((slot) => {
     const slotReservations = reservationsBySlot.get(slot.id) ?? [];
     const activeReservations = slotReservations.filter((reservation) => reservation.status !== 'cancelled');
+    const menuName = slot.menu_id ? menuMap.get(slot.menu_id)?.name ?? 'メニュー未設定' : 'メニュー未設定';
+    const capacity = effectiveCapacity(menuName, slot.capacity);
     return {
       id: slot.id,
       startsAt: slot.starts_at,
       endsAt: slot.ends_at,
-      capacity: Number(slot.capacity ?? 0),
+      capacity,
       booked: activeReservations.length,
       isOpen: slot.is_open !== false,
-      menuName: slot.menu_id ? menuMap.get(slot.menu_id)?.name ?? 'メニュー未設定' : 'メニュー未設定',
+      menuName,
       reservations: slotReservations.map((reservation) => {
         const member = reservation.member_id ? memberMap.get(reservation.member_id) : null;
         const plan = member?.plan_id ? planMap.get(member.plan_id) : null;
