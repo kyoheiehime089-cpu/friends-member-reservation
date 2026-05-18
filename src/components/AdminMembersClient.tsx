@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { AdminPage } from '@/components/AdminPage';
-import { getSupabaseClient } from '@/lib/supabaseClient';
-import { buildBundlePlanName, selectableBasePlans, selectedPlanIdsFromMemberPlan, type PlanLike } from '@/lib/planBundles';
+import { adminFetch } from '@/lib/adminClient';
+import { selectableBasePlans, selectedPlanIdsFromMemberPlan, selectExclusivePlanIds, type PlanLike } from '@/lib/planBundles';
 import { normalizeMemberStatus } from '@/lib/memberStatus';
 
 type MemberRow = { id: string; full_name: string | null; email: string | null; status: string | null; plan_id: string | null; created_at: string | null; updated_at: string | null };
@@ -14,7 +14,7 @@ type NewMember = { fullName: string; email: string; password: string; planIds: s
 type ResponseBody = { ok?: boolean; message?: string; members?: MemberRow[]; plans?: PlanRow[]; statuses?: string[]; member?: MemberRow };
 
 const emptyNew: NewMember = { fullName: '', email: '', password: '', planIds: [], status: '有効' };
-const defaultStatuses = ['有効', '休止予定', '休止中'];
+const defaultStatuses = ['有効', '休止中', '休会中'];
 
 function planRule(plan: PlanRow) {
   if (plan.unlimited) return '通い放題';
@@ -51,37 +51,6 @@ export function AdminMembersClient() {
     return members.filter((member) => `${member.full_name ?? ''} ${member.email ?? ''}`.toLowerCase().includes(keyword));
   }, [members, search]);
 
-  async function token() {
-    const client = getSupabaseClient();
-    if (!client) return null;
-    const { data } = await client.auth.getSession();
-    return data.session?.access_token ?? null;
-  }
-
-  async function adminFetch(path: string, init?: RequestInit) {
-    const accessToken = await token();
-    if (!accessToken) throw new Error('管理者としてログインしてください。');
-    return fetch(path, { ...init, headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, cache: 'no-store' });
-  }
-
-  async function ensurePlan(planIds: string[]) {
-    const cleanIds = Array.from(new Set(planIds.filter(Boolean)));
-    if (cleanIds.length === 0) return null;
-    if (cleanIds.length === 1) return cleanIds[0];
-
-    const client = getSupabaseClient();
-    if (!client) throw new Error('Supabase環境変数を設定してください。');
-    const name = buildBundlePlanName(plans, cleanIds);
-    const existing = plans.find((plan) => plan.name === name);
-    if (existing) return existing.id;
-
-    const { data, error } = await client.from('plans').insert({ name, weekly_limit: null, unlimited: false, is_active: true }).select('id,name,weekly_limit,unlimited,is_active').single();
-    if (error) throw new Error(`組み合わせプランの作成に失敗しました: ${error.message}`);
-    const created = data as PlanRow;
-    setPlans((current) => [...current, created]);
-    return created.id;
-  }
-
   async function load() {
     setLoading(true);
     setMessage('会員情報を読み込んでいます。');
@@ -93,7 +62,7 @@ export function AdminMembersClient() {
       const nextMembers = (result.members ?? []).map((member) => ({ ...member, status: normalizeMemberStatus(member.status) }));
       setPlans(nextPlans);
       setMembers(nextMembers);
-      setStatuses((result.statuses?.length ? result.statuses : defaultStatuses).filter((status) => defaultStatuses.includes(status)));
+      setStatuses(result.statuses?.length ? result.statuses : defaultStatuses);
       setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, { planIds: selectedPlanIdsFromMemberPlan(nextPlans, member.plan_id), status: normalizeMemberStatus(member.status) }])));
       setMessage(nextMembers.length ? '複数プランの付与・状態変更・会員削除ができます。' : '会員がまだ登録されていません。');
     } catch (error) {
@@ -106,7 +75,7 @@ export function AdminMembersClient() {
   useEffect(() => { void load(); }, []);
 
   function togglePlan(ids: string[], planId: string) {
-    return ids.includes(planId) ? ids.filter((id) => id !== planId) : [...ids, planId];
+    return selectExclusivePlanIds(plans, ids, planId);
   }
 
   async function createMember() {
@@ -116,10 +85,14 @@ export function AdminMembersClient() {
     setSavingId('new');
     setMessage('会員を作成しています。');
     try {
-      const planId = await ensurePlan(newMember.planIds);
-      const response = await adminFetch('/api/admin/members', { method: 'POST', body: JSON.stringify({ fullName: newMember.fullName, email: newMember.email, password: newMember.password, planId, status: newMember.status }) });
+      const response = await adminFetch('/api/admin/members', { method: 'POST', body: JSON.stringify({ fullName: newMember.fullName, email: newMember.email, password: newMember.password, planId: newMember.planIds[0] ?? null, status: newMember.status }) });
       const result = await response.json().catch(() => ({})) as ResponseBody;
-      if (!response.ok || !result.ok) { setMessage(result.message ?? '会員の作成に失敗しました。'); return; }
+      if (!response.ok || !result.ok || !result.member) { setMessage(result.message ?? '会員の作成に失敗しました。'); return; }
+      if (newMember.planIds.length > 1 || newMember.planIds[0] !== result.member.plan_id) {
+        const planResponse = await adminFetch('/api/admin/member-plan', { method: 'PATCH', body: JSON.stringify({ memberId: result.member.id, planIds: newMember.planIds, status: newMember.status }) });
+        const planResult = await planResponse.json().catch(() => ({})) as ResponseBody;
+        if (!planResponse.ok || !planResult.ok) throw new Error(planResult.message ?? '会員は作成しましたが、プラン保存に失敗しました。');
+      }
       setNewMember(emptyNew);
       setMessage('会員を作成しました。');
       await load();
@@ -136,14 +109,11 @@ export function AdminMembersClient() {
     setSavingId(member.id);
     setMessage('会員情報を保存しています。');
     try {
-      const planId = await ensurePlan(draft.planIds);
-      const response = await adminFetch('/api/admin/members', { method: 'PATCH', body: JSON.stringify({ memberId: member.id, planId, status: draft.status }) });
+      const response = await adminFetch('/api/admin/member-plan', { method: 'PATCH', body: JSON.stringify({ memberId: member.id, planIds: draft.planIds, status: draft.status }) });
       const result = await response.json().catch(() => ({})) as ResponseBody;
-      if (!response.ok || !result.ok || !result.member) { setMessage(result.message ?? '会員情報の保存に失敗しました。'); return; }
-      const updated = { ...result.member, status: normalizeMemberStatus(result.member.status) };
-      setMembers((current) => current.map((item) => item.id === member.id ? updated : item));
-      setDrafts((current) => ({ ...current, [member.id]: { planIds: selectedPlanIdsFromMemberPlan(plans, updated.plan_id), status: normalizeMemberStatus(updated.status) } }));
+      if (!response.ok || !result.ok) { setMessage(result.message ?? '会員情報の保存に失敗しました。'); return; }
       setMessage('会員情報を保存しました。');
+      await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '会員情報の保存に失敗しました。');
     } finally {
