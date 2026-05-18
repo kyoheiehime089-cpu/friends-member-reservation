@@ -1,4 +1,4 @@
-import { OwnerCalendarNoReload as OwnerReservationsCalendar } from '@/components/OwnerCalendarNoReload';
+import { OwnerCalendarInstant as OwnerReservationsCalendar } from '@/components/OwnerCalendarInstant';
 
 export default function Page() {
   return <OwnerReservationsCalendar />;
