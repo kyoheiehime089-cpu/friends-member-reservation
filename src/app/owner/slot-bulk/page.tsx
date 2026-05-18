@@ -12,7 +12,7 @@ export default function OwnerSlotBulkPage() {
   const [menuId, setMenuId] = useState('');
   const [capacity, setCapacity] = useState(5);
   const [isOpen, setIsOpen] = useState(true);
-  const [days, setDays] = useState(60);
+  const [days, setDays] = useState<string>('all');
   const [message, setMessage] = useState('メニューを読み込んでいます。');
   const [saving, setSaving] = useState(false);
 
@@ -40,7 +40,7 @@ export default function OwnerSlotBulkPage() {
         setMenuId(nextMenus[0].id);
         setCapacity(nextMenus[0].default_capacity);
       }
-      setMessage('変更したいメニューを選んでください。');
+      setMessage('一括変更した設定は、次に手動で変えるまでそのメニューの標準設定として残ります。');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'メニュー一覧の取得に失敗しました。');
     }
@@ -52,7 +52,8 @@ export default function OwnerSlotBulkPage() {
     if (!menuId) return setMessage('メニューを選択してください。');
     const menu = menus.find((item) => item.id === menuId);
     const label = menu?.name ?? '選択したメニュー';
-    if (!window.confirm(`${label} の今後${days}日分の予約枠を一括変更します。よろしいですか？`)) return;
+    const periodText = days === 'all' ? '以後ずっと' : `既存の未来枠 ${days}日分`;
+    if (!window.confirm(`${label} を「定員${capacity}名 / ${isOpen ? '受付中' : '受付停止'}」に変更します。\n${periodText}に反映し、次に手動で変えるまで標準設定として残します。`)) return;
     setSaving(true);
     setMessage('一括変更しています。');
     try {
@@ -71,12 +72,12 @@ export default function OwnerSlotBulkPage() {
   }
 
   return (
-    <AdminPage title="予約枠の一括変更" description="セミパーソナル全体・ヨガ全体など、メニュー単位で定員と受付状態をまとめて変更します。">
+    <AdminPage title="予約枠の一括変更" description="メニュー単位で定員・受付状態をまとめて変更します。">
       <div className="space-y-5">
         <p className="rounded-2xl bg-yellow-50 p-4 text-sm font-bold text-yellow-900">{message}</p>
         <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="text-xl font-black">メニュー単位で一括変更</h2>
-          <p className="mt-2 text-sm font-bold text-gray-500">例：セミパーソナル全体を定員5名、ヨガ全体を定員7名、イベント全体を受付停止にできます。</p>
+          <p className="mt-2 text-sm font-bold text-gray-500">例：セミパーソナル全体を定員8名に変更すると、今後作るセミパーソナル枠も定員8名になります。</p>
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <label className="grid gap-2 text-sm font-black text-gray-700">
               対象メニュー
@@ -85,12 +86,13 @@ export default function OwnerSlotBulkPage() {
               </select>
             </label>
             <label className="grid gap-2 text-sm font-black text-gray-700">
-              対象期間
-              <select className="rounded-xl border px-3 py-3 font-bold" value={days} onChange={(event) => setDays(Number(event.target.value))}>
-                <option value={30}>今後30日分</option>
-                <option value={60}>今後60日分</option>
-                <option value={90}>今後90日分</option>
-                <option value={180}>今後180日分</option>
+              既存の未来枠への反映範囲
+              <select className="rounded-xl border px-3 py-3 font-bold" value={days} onChange={(event) => setDays(event.target.value)}>
+                <option value="all">以後ずっと</option>
+                <option value="30">既存の未来枠 30日分</option>
+                <option value="60">既存の未来枠 60日分</option>
+                <option value="90">既存の未来枠 90日分</option>
+                <option value="180">既存の未来枠 180日分</option>
               </select>
             </label>
             <label className="grid gap-2 text-sm font-black text-gray-700">
