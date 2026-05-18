@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { uuidPattern } from '@/lib/adminServer';
+import { effectiveCapacity, effectiveDefaultCapacity } from '@/lib/effectiveCapacity';
 
 type MaybeError = { message?: string; code?: string } | null | undefined;
 
@@ -48,6 +49,13 @@ async function firstStoreId(db: SupabaseClient) {
   return storeRows[0].id as string;
 }
 
+async function menuNameById(db: SupabaseClient, menuId: string | null | undefined) {
+  if (!menuId) return '';
+  const { data, error } = await db.from('menus').select('name,default_capacity').eq('id', menuId).maybeSingle();
+  if (error) throw new Error(`メニュー情報の取得に失敗しました: ${error.message}`);
+  return { name: String(data?.name ?? ''), defaultCapacity: Number(data?.default_capacity ?? 5) };
+}
+
 export async function ensureAdminReservationSlot(db: SupabaseClient, body: AdminReservationBody) {
   const slotId = body.slotId?.trim();
   if (slotId && uuidPattern.test(slotId)) return slotId;
@@ -67,8 +75,10 @@ export async function ensureAdminReservationSlot(db: SupabaseClient, body: Admin
   if (existingSlot?.id) return existingSlot.id as string;
 
   const storeId = await firstStoreId(db);
+  const menu = await menuNameById(db, menuId);
   const minutes = normalizePositiveNumber(body.minutes, 40, 5, 240);
-  const capacity = normalizePositiveNumber(body.capacity, 5, 1, 99);
+  const requestedCapacity = normalizePositiveNumber(body.capacity, menu.defaultCapacity || 5, 1, 99);
+  const capacity = effectiveDefaultCapacity(menu.name, requestedCapacity);
   const endsAt = new Date(new Date(startsAt).getTime() + minutes * 60000).toISOString();
   const { data: createdSlot, error: createError } = await db
     .from('reservation_slots')
@@ -108,10 +118,13 @@ export async function bookAdminReservation(db: SupabaseClient, body: AdminReserv
   if (!memberId || !uuidPattern.test(memberId)) throw new Error('会員を選択してください。');
 
   const slotId = await ensureAdminReservationSlot(db, body);
-  const { data: slot, error: slotError } = await db.from('reservation_slots').select('id,capacity,is_open,starts_at').eq('id', slotId).maybeSingle();
+  const { data: slot, error: slotError } = await db.from('reservation_slots').select('id,capacity,is_open,starts_at,menu_id').eq('id', slotId).maybeSingle();
   if (slotError) throw new Error(`予約枠の取得に失敗しました: ${slotError.message}`);
   if (!slot) throw new Error('予約枠が見つかりません。');
   if (slot.is_open === false) throw new Error('この枠は受付停止中です。');
+
+  const menu = await menuNameById(db, slot.menu_id as string | null | undefined);
+  const capacity = effectiveCapacity(menu.name, Number(slot.capacity ?? 0));
 
   const { data: member, error: memberError } = await db.from('members').select('id,full_name,email').eq('id', memberId).maybeSingle();
   if (memberError) throw new Error(`会員情報の取得に失敗しました: ${memberError.message}`);
@@ -119,11 +132,11 @@ export async function bookAdminReservation(db: SupabaseClient, body: AdminReserv
 
   const { data: existing, error: existingError } = await db.from('reservations').select('id,status').eq('reservation_slot_id', slotId).eq('member_id', memberId).maybeSingle();
   if (existingError) throw new Error(`予約確認に失敗しました: ${existingError.message}`);
-  if (existing?.status === 'booked') throw new Error('この会員はすでにこの枠を予約済みです。');
+  if (existing?.status === 'booked') throw new Error('この会員はすでにこの枠を予約済みです。別の会員を選択してください。');
 
   const { count, error: countError } = await db.from('reservations').select('id', { count: 'exact', head: true }).eq('reservation_slot_id', slotId).eq('status', 'booked');
   if (countError) throw new Error(`残席確認に失敗しました: ${countError.message}`);
-  if ((count ?? 0) >= Number(slot.capacity ?? 0)) throw new Error('この枠は満席です。');
+  if ((count ?? 0) >= capacity) throw new Error('この枠は満席です。');
 
   const reservationId = existing?.id
     ? await updateReservationStatus(db, existing.id, adminId)
