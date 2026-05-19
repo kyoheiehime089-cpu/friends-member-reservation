@@ -130,23 +130,27 @@ export async function bookAdminReservation(db: SupabaseClient, body: AdminReserv
   if (memberError) throw new Error(`会員情報の取得に失敗しました: ${memberError.message}`);
   if (!member) throw new Error('会員が見つかりません。');
 
-  const { data: existing, error: existingError } = await db.from('reservations').select('id,status').eq('reservation_slot_id', slotId).eq('member_id', memberId).maybeSingle();
+  const { data: existingRows, error: existingError } = await db
+    .from('reservations')
+    .select('id,status,created_at')
+    .eq('reservation_slot_id', slotId)
+    .eq('member_id', memberId)
+    .order('created_at', { ascending: false });
   if (existingError) throw new Error(`予約確認に失敗しました: ${existingError.message}`);
-  if (existing?.status === 'booked') throw new Error('この会員はすでにこの枠を予約済みです。別の会員を選択してください。');
+
+  const existingBooked = (existingRows ?? []).find((row: { id: string; status: string | null }) => row.status === 'booked');
+  if (existingBooked) throw new Error('この会員はすでにこの枠を予約済みです。別の会員を選択してください。');
+  const reusableReservation = (existingRows ?? []).find((row: { id: string; status: string | null }) => row.status !== 'booked');
 
   const { count, error: countError } = await db.from('reservations').select('id', { count: 'exact', head: true }).eq('reservation_slot_id', slotId).eq('status', 'booked');
   if (countError) throw new Error(`残席確認に失敗しました: ${countError.message}`);
   if ((count ?? 0) >= capacity) throw new Error('この枠は満席です。');
 
-  const reservationId = existing?.id
-    ? await updateReservationStatus(db, existing.id, adminId)
+  const reservationId = reusableReservation?.id
+    ? await updateReservationStatus(db, reusableReservation.id, adminId)
     : await insertReservation(db, slotId, memberId, adminId);
 
-  return {
-    reservationId,
-    slotId,
-    memberLabel: String(member.full_name || member.email || '会員')
-  };
+  return { reservationId, slotId, memberLabel: String(member.full_name || member.email || '会員') };
 }
 
 export async function cancelAdminReservation(db: SupabaseClient, reservationId: string, adminId: string) {
