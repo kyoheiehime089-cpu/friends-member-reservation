@@ -57,12 +57,12 @@ async function removeReservations(db: ReturnType<typeof createServiceClient>, re
       .eq('member_id', safeMemberId);
     if (mark.error) throw new Error(`キャンセル処理に失敗しました: ${mark.error.message}`);
 
-    const remove = await db
+    // 物理削除できる環境では削除する。FK等で削除できなくても、booked が残っていなければ成功扱いにする。
+    await db
       .from('reservations')
       .delete()
       .eq('reservation_slot_id', safeSlotId)
       .eq('member_id', safeMemberId);
-    if (remove.error) throw new Error(`キャンセル済み予約の削除に失敗しました: ${remove.error.message}`);
 
     const { count, error: verifyError } = await db
       .from('reservations')
@@ -86,8 +86,7 @@ async function removeReservations(db: ReturnType<typeof createServiceClient>, re
     const row = await findByReservationId(db, safeReservationId);
     const mark = await db.from('reservations').update({ status: 'cancelled' }).eq('id', safeReservationId);
     if (mark.error) throw new Error(`キャンセル処理に失敗しました: ${mark.error.message}`);
-    const remove = await db.from('reservations').delete().eq('id', safeReservationId);
-    if (remove.error) throw new Error(`キャンセル済み予約の削除に失敗しました: ${remove.error.message}`);
+    await db.from('reservations').delete().eq('id', safeReservationId);
     const { count, error: verifyError } = await db.from('reservations').select('id', { count: 'exact', head: true }).eq('id', safeReservationId).eq('status', 'booked');
     if (verifyError) throw new Error(`キャンセル後の確認に失敗しました: ${verifyError.message}`);
     if ((count ?? 0) > 0) throw new Error('キャンセル後も予約済みデータが残っています。もう一度お試しください。');
