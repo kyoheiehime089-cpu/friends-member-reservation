@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient, requireAdmin, uuidPattern } from '@/lib/adminServer';
-import { cancelAdminReservation } from '@/lib/adminReservations';
 import { shouldKeepEmptySlot } from '@/lib/yogaSchedule';
 
 export const runtime = 'nodejs';
@@ -13,38 +12,86 @@ type CancelledReservation = {
   status: string;
   reservation_slot_id?: string | null;
   member_id?: string | null;
-  deleted_count?: number;
+  changed_count?: number;
 };
 
-async function deleteBySlotAndMember(db: ReturnType<typeof createServiceClient>, slotId?: string | null, memberId?: string | null) {
-  const safeSlotId = slotId?.trim();
-  const safeMemberId = memberId?.trim();
-  if (!safeSlotId || !safeMemberId || !uuidPattern.test(safeSlotId) || !uuidPattern.test(safeMemberId)) return null;
-
-  const { data: rows, error: selectError } = await db
+async function findByReservationId(db: ReturnType<typeof createServiceClient>, reservationId?: string | null) {
+  const safeReservationId = reservationId?.trim();
+  if (!safeReservationId || !uuidPattern.test(safeReservationId)) return null;
+  const { data, error } = await db
     .from('reservations')
     .select('id,reservation_slot_id,member_id,status')
-    .eq('reservation_slot_id', safeSlotId)
-    .eq('member_id', safeMemberId);
-  if (selectError) throw new Error(`キャンセル対象の確認に失敗しました: ${selectError.message}`);
-
-  const deleteResult = await db
-    .from('reservations')
-    .delete()
-    .eq('reservation_slot_id', safeSlotId)
-    .eq('member_id', safeMemberId);
-  if (deleteResult.error) throw new Error(`予約削除に失敗しました: ${deleteResult.error.message}`);
-
-  return {
-    id: rows?.[0]?.id ?? null,
-    status: 'cancelled',
-    reservation_slot_id: safeSlotId,
-    member_id: safeMemberId,
-    deleted_count: rows?.length ?? 0
-  } as CancelledReservation;
+    .eq('id', safeReservationId)
+    .maybeSingle();
+  if (error) throw new Error(`キャンセル対象の確認に失敗しました: ${error.message}`);
+  return data as { id: string; reservation_slot_id: string | null; member_id: string | null; status: string | null } | null;
 }
 
-async function deleteSlotIfEmptyOneOff(db: ReturnType<typeof createServiceClient>, slotId?: string | null) {
+async function cancelBySlotAndMember(db: ReturnType<typeof createServiceClient>, reservationId?: string | null, slotId?: string | null, memberId?: string | null) {
+  const safeReservationId = reservationId?.trim() || null;
+  let safeSlotId = slotId?.trim() || null;
+  let safeMemberId = memberId?.trim() || null;
+  let foundId: string | null = null;
+
+  if ((!safeSlotId || !safeMemberId) && safeReservationId) {
+    const row = await findByReservationId(db, safeReservationId);
+    if (row) {
+      foundId = row.id;
+      safeSlotId = safeSlotId || row.reservation_slot_id;
+      safeMemberId = safeMemberId || row.member_id;
+    }
+  }
+
+  if (safeSlotId && safeMemberId && uuidPattern.test(safeSlotId) && uuidPattern.test(safeMemberId)) {
+    const { data: rows, error: selectError } = await db
+      .from('reservations')
+      .select('id,reservation_slot_id,member_id,status')
+      .eq('reservation_slot_id', safeSlotId)
+      .eq('member_id', safeMemberId);
+    if (selectError) throw new Error(`キャンセル対象の確認に失敗しました: ${selectError.message}`);
+
+    const result = await db
+      .from('reservations')
+      .update({ status: 'cancelled' })
+      .eq('reservation_slot_id', safeSlotId)
+      .eq('member_id', safeMemberId);
+    if (result.error) throw new Error(`キャンセル処理に失敗しました: ${result.error.message}`);
+
+    const { count, error: verifyError } = await db
+      .from('reservations')
+      .select('id', { count: 'exact', head: true })
+      .eq('reservation_slot_id', safeSlotId)
+      .eq('member_id', safeMemberId)
+      .eq('status', 'booked');
+    if (verifyError) throw new Error(`キャンセル後の確認に失敗しました: ${verifyError.message}`);
+    if ((count ?? 0) > 0) throw new Error('キャンセル後も予約済みデータが残っています。もう一度お試しください。');
+
+    return {
+      id: foundId || rows?.[0]?.id || safeReservationId,
+      status: 'cancelled',
+      reservation_slot_id: safeSlotId,
+      member_id: safeMemberId,
+      changed_count: rows?.length ?? 0
+    } as CancelledReservation;
+  }
+
+  if (safeReservationId && uuidPattern.test(safeReservationId)) {
+    const row = await findByReservationId(db, safeReservationId);
+    const result = await db.from('reservations').update({ status: 'cancelled' }).eq('id', safeReservationId);
+    if (result.error) throw new Error(`キャンセル処理に失敗しました: ${result.error.message}`);
+    return {
+      id: safeReservationId,
+      status: 'cancelled',
+      reservation_slot_id: row?.reservation_slot_id ?? null,
+      member_id: row?.member_id ?? null,
+      changed_count: row ? 1 : 0
+    } as CancelledReservation;
+  }
+
+  return null;
+}
+
+async function markSlotClosedIfEmptyOneOff(db: ReturnType<typeof createServiceClient>, slotId?: string | null) {
   const safeSlotId = slotId?.trim();
   if (!safeSlotId || !uuidPattern.test(safeSlotId)) return null;
 
@@ -68,8 +115,8 @@ async function deleteSlotIfEmptyOneOff(db: ReturnType<typeof createServiceClient
   const menuName = Array.isArray(joinedMenu) ? String(joinedMenu[0]?.name ?? '') : String(joinedMenu?.name ?? '');
   if (shouldKeepEmptySlot(menuName)) return null;
 
-  const { error: deleteError } = await db.from('reservation_slots').delete().eq('id', safeSlotId);
-  if (deleteError) throw new Error(`空の単発枠の削除に失敗しました: ${deleteError.message}`);
+  const closeResult = await db.from('reservation_slots').update({ is_open: false }).eq('id', safeSlotId);
+  if (closeResult.error) throw new Error(`空の単発枠の受付停止に失敗しました: ${closeResult.error.message}`);
   return safeSlotId;
 }
 
@@ -80,42 +127,11 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({})) as Body;
   const db = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
   try {
-    const reservationId = body.reservationId?.trim() ?? '';
-
-    if (!reservationId || !uuidPattern.test(reservationId)) {
-      const fallback = await deleteBySlotAndMember(db, body.slotId, body.memberId);
-      if (!fallback) return NextResponse.json({ ok: false, message: 'キャンセルに必要な予約情報が足りません。画面を更新してからもう一度お試しください。' }, { status: 400 });
-      const deletedSlotId = await deleteSlotIfEmptyOneOff(db, fallback.reservation_slot_id);
-      return NextResponse.json({ ok: true, reservation: fallback, deleted: true, deletedSlotId, message: '予約をキャンセルしました。' });
+    const reservation = await cancelBySlotAndMember(db, body.reservationId, body.slotId, body.memberId);
+    if (!reservation) {
+      return NextResponse.json({ ok: false, message: 'キャンセルに必要な予約情報が足りません。画面を更新してからもう一度お試しください。' }, { status: 400 });
     }
-
-    let reservation: Awaited<ReturnType<typeof cancelAdminReservation>> | CancelledReservation | null = null;
-    try {
-      reservation = await cancelAdminReservation(db, reservationId, admin.adminId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      if (!message.includes('見つかりません')) throw error;
-      const fallback = await deleteBySlotAndMember(db, body.slotId, body.memberId);
-      if (!fallback) throw error;
-      const deletedSlotId = await deleteSlotIfEmptyOneOff(db, fallback.reservation_slot_id);
-      return NextResponse.json({ ok: true, reservation: fallback, deleted: true, deletedSlotId, message: '予約をキャンセルしました。' });
-    }
-
-    if (reservation.status !== 'cancelled') return NextResponse.json({ ok: false, message: 'キャンセル状態に更新できませんでした。' }, { status: 400 });
-
-    if (reservation.reservation_slot_id && reservation.member_id) {
-      const deleteSame = await db
-        .from('reservations')
-        .delete()
-        .eq('reservation_slot_id', reservation.reservation_slot_id)
-        .eq('member_id', reservation.member_id);
-      if (deleteSame.error) throw new Error(`予約削除に失敗しました: ${deleteSame.error.message}`);
-    } else {
-      const deleteOne = await db.from('reservations').delete().eq('id', reservationId);
-      if (deleteOne.error) throw new Error(`予約削除に失敗しました: ${deleteOne.error.message}`);
-    }
-
-    const deletedSlotId = await deleteSlotIfEmptyOneOff(db, reservation.reservation_slot_id);
+    const deletedSlotId = await markSlotClosedIfEmptyOneOff(db, reservation.reservation_slot_id);
     return NextResponse.json({ ok: true, reservation, deleted: true, deletedSlotId, message: '予約をキャンセルしました。' });
   } catch (error) {
     return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'キャンセル処理に失敗しました。' }, { status: 400 });
