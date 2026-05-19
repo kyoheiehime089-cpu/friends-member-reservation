@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { uuidPattern } from '@/lib/adminServer';
 import { effectiveCapacity, effectiveDefaultCapacity } from '@/lib/effectiveCapacity';
+import { effectiveBookedReservations, type ReservationStateRow } from '@/lib/reservationState';
 
 type MaybeError = { message?: string; code?: string } | null | undefined;
 
@@ -89,19 +90,6 @@ export async function ensureAdminReservationSlot(db: SupabaseClient, body: Admin
   return createdSlot.id as string;
 }
 
-async function updateReservationStatus(db: SupabaseClient, reservationId: string, adminId: string) {
-  const payloadWithAudit = { status: 'booked', cancelled_at: null, cancelled_by: null, created_by: adminId };
-  const first = await db.from('reservations').update(payloadWithAudit).eq('id', reservationId).select('id').single();
-  if (!first.error) return first.data.id as string;
-  if (!isMissingColumnError(first.error, 'created_by') && !isMissingColumnError(first.error, 'cancelled_by') && !isMissingColumnError(first.error, 'cancelled_at')) {
-    throw new Error(`予約に失敗しました: ${first.error.message}`);
-  }
-
-  const fallback = await db.from('reservations').update({ status: 'booked' }).eq('id', reservationId).select('id').single();
-  if (fallback.error) throw new Error(`予約に失敗しました: ${fallback.error.message}`);
-  return fallback.data.id as string;
-}
-
 async function insertReservation(db: SupabaseClient, slotId: string, memberId: string, adminId: string) {
   const payloadWithAudit = { reservation_slot_id: slotId, member_id: memberId, status: 'booked', created_by: adminId };
   const first = await db.from('reservations').insert(payloadWithAudit).select('id').single();
@@ -111,6 +99,34 @@ async function insertReservation(db: SupabaseClient, slotId: string, memberId: s
   const fallback = await db.from('reservations').insert({ reservation_slot_id: slotId, member_id: memberId, status: 'booked' }).select('id').single();
   if (fallback.error) throw new Error(`予約に失敗しました: ${fallback.error.message}`);
   return fallback.data.id as string;
+}
+
+async function insertCancellationMarker(db: SupabaseClient, slotId: string, memberId: string, adminId: string) {
+  const payloadWithAudit = {
+    reservation_slot_id: slotId,
+    member_id: memberId,
+    status: 'cancelled',
+    created_by: adminId,
+    cancelled_by: adminId,
+    cancelled_at: new Date().toISOString()
+  };
+  const first = await db.from('reservations').insert(payloadWithAudit).select('id').single();
+  if (!first.error) return first.data.id as string;
+
+  const canFallback = isMissingColumnError(first.error, 'created_by') || isMissingColumnError(first.error, 'cancelled_by') || isMissingColumnError(first.error, 'cancelled_at');
+  if (!canFallback) return null;
+
+  const fallback = await db.from('reservations').insert({ reservation_slot_id: slotId, member_id: memberId, status: 'cancelled' }).select('id').single();
+  return fallback.error ? null : fallback.data.id as string;
+}
+
+async function slotReservations(db: SupabaseClient, slotId: string) {
+  const { data, error } = await db
+    .from('reservations')
+    .select('id,reservation_slot_id,member_id,status,created_at')
+    .eq('reservation_slot_id', slotId);
+  if (error) throw new Error(`予約状況の確認に失敗しました: ${error.message}`);
+  return (data ?? []) as ReservationStateRow[];
 }
 
 export async function bookAdminReservation(db: SupabaseClient, body: AdminReservationBody, adminId: string): Promise<ReservationWriteResult> {
@@ -130,26 +146,15 @@ export async function bookAdminReservation(db: SupabaseClient, body: AdminReserv
   if (memberError) throw new Error(`会員情報の取得に失敗しました: ${memberError.message}`);
   if (!member) throw new Error('会員が見つかりません。');
 
-  const { data: existingRows, error: existingError } = await db
-    .from('reservations')
-    .select('id,status,created_at')
-    .eq('reservation_slot_id', slotId)
-    .eq('member_id', memberId)
-    .order('created_at', { ascending: false });
-  if (existingError) throw new Error(`予約確認に失敗しました: ${existingError.message}`);
+  const rows = await slotReservations(db, slotId);
+  const effectiveBooked = effectiveBookedReservations(rows);
+  if (effectiveBooked.some((row) => row.member_id === memberId)) {
+    throw new Error('この会員はすでにこの枠を予約済みです。別の会員を選択してください。');
+  }
+  if (effectiveBooked.length >= capacity) throw new Error('この枠は満席です。');
 
-  const existingBooked = (existingRows ?? []).find((row: { id: string; status: string | null }) => row.status === 'booked');
-  if (existingBooked) throw new Error('この会員はすでにこの枠を予約済みです。別の会員を選択してください。');
-  const reusableReservation = (existingRows ?? []).find((row: { id: string; status: string | null }) => row.status !== 'booked');
-
-  const { count, error: countError } = await db.from('reservations').select('id', { count: 'exact', head: true }).eq('reservation_slot_id', slotId).eq('status', 'booked');
-  if (countError) throw new Error(`残席確認に失敗しました: ${countError.message}`);
-  if ((count ?? 0) >= capacity) throw new Error('この枠は満席です。');
-
-  const reservationId = reusableReservation?.id
-    ? await updateReservationStatus(db, reusableReservation.id, adminId)
-    : await insertReservation(db, slotId, memberId, adminId);
-
+  // 既存のcancelled行を再利用するとcreated_atが古いまま残り、後から表示判定が崩れるため、再予約は必ず新規booked行として作る。
+  const reservationId = await insertReservation(db, slotId, memberId, adminId);
   return { reservationId, slotId, memberLabel: String(member.full_name || member.email || '会員') };
 }
 
@@ -163,16 +168,15 @@ export async function cancelAdminReservation(db: SupabaseClient, reservationId: 
     .maybeSingle();
   if (beforeError) throw new Error(`キャンセル対象の確認に失敗しました: ${beforeError.message}`);
   if (!before) throw new Error('キャンセル対象の予約が見つかりません。');
+  if (!before.reservation_slot_id || !before.member_id) throw new Error('キャンセル対象の予約情報が不足しています。');
 
-  const payloadWithAudit = { status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: adminId };
   const first = await db
     .from('reservations')
-    .update(payloadWithAudit)
-    .eq('id', reservationId)
-    .select('id,status,cancelled_at,reservation_slot_id,member_id')
-    .single();
+    .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: adminId })
+    .eq('reservation_slot_id', before.reservation_slot_id)
+    .eq('member_id', before.member_id)
+    .select('id,status,reservation_slot_id,member_id');
 
-  let updated = first.data as { id: string; status: string; cancelled_at?: string | null; reservation_slot_id?: string | null; member_id?: string | null } | null;
   if (first.error) {
     if (!isMissingColumnError(first.error, 'cancelled_at') && !isMissingColumnError(first.error, 'cancelled_by')) {
       throw new Error(`キャンセル処理に失敗しました: ${first.error.message}`);
@@ -180,21 +184,13 @@ export async function cancelAdminReservation(db: SupabaseClient, reservationId: 
     const fallback = await db
       .from('reservations')
       .update({ status: 'cancelled' })
-      .eq('id', reservationId)
-      .select('id,status,reservation_slot_id,member_id')
-      .single();
-    if (fallback.error) throw new Error(`キャンセル処理に失敗しました: ${fallback.error.message}`);
-    updated = fallback.data;
-  }
-
-  if (before.reservation_slot_id && before.member_id) {
-    await db
-      .from('reservations')
-      .update({ status: 'cancelled' })
       .eq('reservation_slot_id', before.reservation_slot_id)
       .eq('member_id', before.member_id)
-      .eq('status', 'booked');
+      .select('id,status,reservation_slot_id,member_id');
+    if (fallback.error) throw new Error(`キャンセル処理に失敗しました: ${fallback.error.message}`);
   }
+
+  await insertCancellationMarker(db, before.reservation_slot_id, before.member_id, adminId);
 
   const { count, error: verifyError } = await db
     .from('reservations')
@@ -205,5 +201,5 @@ export async function cancelAdminReservation(db: SupabaseClient, reservationId: 
   if (verifyError) throw new Error(`キャンセル後の確認に失敗しました: ${verifyError.message}`);
   if ((count ?? 0) > 0) throw new Error('キャンセル後も予約済みデータが残っています。もう一度お試しください。');
 
-  return { ...updated, status: 'cancelled', reservation_slot_id: before.reservation_slot_id, member_id: before.member_id };
+  return { id: reservationId, status: 'cancelled', reservation_slot_id: before.reservation_slot_id, member_id: before.member_id };
 }
