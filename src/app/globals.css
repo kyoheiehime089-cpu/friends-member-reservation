@@ -5,3 +5,12 @@
 input[placeholder="初期パスワード 6文字以上"] {
   display: none;
 }
+
+/* 管理カレンダー: 夜の時間帯まで縦に見ても日付・曜日が分かるように、時間割の見出し行を固定 */
+div[style*="grid-template-columns"] > div:nth-child(-n + 8) {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: white;
+  box-shadow: 0 1px 0 rgba(229, 231, 235, 1);
+}
