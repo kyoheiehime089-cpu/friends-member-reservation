@@ -9,10 +9,10 @@ type Body = { reservationId?: string; slotId?: string | null; memberId?: string 
 
 type CancelledReservation = {
   id?: string | null;
-  status: string;
+  status: 'cancelled';
   reservation_slot_id?: string | null;
   member_id?: string | null;
-  changed_count?: number;
+  removed_count?: number;
 };
 
 async function findByReservationId(db: ReturnType<typeof createServiceClient>, reservationId?: string | null) {
@@ -27,7 +27,7 @@ async function findByReservationId(db: ReturnType<typeof createServiceClient>, r
   return data as { id: string; reservation_slot_id: string | null; member_id: string | null; status: string | null } | null;
 }
 
-async function cancelBySlotAndMember(db: ReturnType<typeof createServiceClient>, reservationId?: string | null, slotId?: string | null, memberId?: string | null) {
+async function removeReservations(db: ReturnType<typeof createServiceClient>, reservationId?: string | null, slotId?: string | null, memberId?: string | null) {
   const safeReservationId = reservationId?.trim() || null;
   let safeSlotId = slotId?.trim() || null;
   let safeMemberId = memberId?.trim() || null;
@@ -50,12 +50,19 @@ async function cancelBySlotAndMember(db: ReturnType<typeof createServiceClient>,
       .eq('member_id', safeMemberId);
     if (selectError) throw new Error(`キャンセル対象の確認に失敗しました: ${selectError.message}`);
 
-    const result = await db
+    const mark = await db
       .from('reservations')
       .update({ status: 'cancelled' })
       .eq('reservation_slot_id', safeSlotId)
       .eq('member_id', safeMemberId);
-    if (result.error) throw new Error(`キャンセル処理に失敗しました: ${result.error.message}`);
+    if (mark.error) throw new Error(`キャンセル処理に失敗しました: ${mark.error.message}`);
+
+    const remove = await db
+      .from('reservations')
+      .delete()
+      .eq('reservation_slot_id', safeSlotId)
+      .eq('member_id', safeMemberId);
+    if (remove.error) throw new Error(`キャンセル済み予約の削除に失敗しました: ${remove.error.message}`);
 
     const { count, error: verifyError } = await db
       .from('reservations')
@@ -71,20 +78,25 @@ async function cancelBySlotAndMember(db: ReturnType<typeof createServiceClient>,
       status: 'cancelled',
       reservation_slot_id: safeSlotId,
       member_id: safeMemberId,
-      changed_count: rows?.length ?? 0
+      removed_count: rows?.length ?? 0
     } as CancelledReservation;
   }
 
   if (safeReservationId && uuidPattern.test(safeReservationId)) {
     const row = await findByReservationId(db, safeReservationId);
-    const result = await db.from('reservations').update({ status: 'cancelled' }).eq('id', safeReservationId);
-    if (result.error) throw new Error(`キャンセル処理に失敗しました: ${result.error.message}`);
+    const mark = await db.from('reservations').update({ status: 'cancelled' }).eq('id', safeReservationId);
+    if (mark.error) throw new Error(`キャンセル処理に失敗しました: ${mark.error.message}`);
+    const remove = await db.from('reservations').delete().eq('id', safeReservationId);
+    if (remove.error) throw new Error(`キャンセル済み予約の削除に失敗しました: ${remove.error.message}`);
+    const { count, error: verifyError } = await db.from('reservations').select('id', { count: 'exact', head: true }).eq('id', safeReservationId).eq('status', 'booked');
+    if (verifyError) throw new Error(`キャンセル後の確認に失敗しました: ${verifyError.message}`);
+    if ((count ?? 0) > 0) throw new Error('キャンセル後も予約済みデータが残っています。もう一度お試しください。');
     return {
       id: safeReservationId,
       status: 'cancelled',
       reservation_slot_id: row?.reservation_slot_id ?? null,
       member_id: row?.member_id ?? null,
-      changed_count: row ? 1 : 0
+      removed_count: row ? 1 : 0
     } as CancelledReservation;
   }
 
@@ -127,7 +139,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({})) as Body;
   const db = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
   try {
-    const reservation = await cancelBySlotAndMember(db, body.reservationId, body.slotId, body.memberId);
+    const reservation = await removeReservations(db, body.reservationId, body.slotId, body.memberId);
     if (!reservation) {
       return NextResponse.json({ ok: false, message: 'キャンセルに必要な予約情報が足りません。画面を更新してからもう一度お試しください。' }, { status: 400 });
     }
