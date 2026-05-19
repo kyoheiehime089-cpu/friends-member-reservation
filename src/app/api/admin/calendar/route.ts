@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient, requireAdmin } from '@/lib/adminServer';
 import { effectiveCapacity } from '@/lib/effectiveCapacity';
+import { ensureYogaSlotsForRange, shouldKeepEmptySlot } from '@/lib/yogaSchedule';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,13 @@ export async function GET(request: Request) {
   const end = parseDate(url.searchParams.get('end'), defaultEnd);
 
   const db = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
+
+  try {
+    await ensureYogaSlotsForRange(db, start, end);
+  } catch (error) {
+    return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'ヨガ枠の反映に失敗しました。' }, { status: 500 });
+  }
+
   const { data: slotRows, error: slotError } = await db
     .from('reservation_slots')
     .select('id,menu_id,starts_at,ends_at,capacity,is_open')
@@ -63,11 +71,12 @@ export async function GET(request: Request) {
     reservationsBySlot.set(reservation.reservation_slot_id, [...(reservationsBySlot.get(reservation.reservation_slot_id) ?? []), reservation]);
   });
 
-  const calendarSlots = slots.map((slot) => {
+  const calendarSlots = slots.flatMap((slot) => {
     const slotReservations = reservationsBySlot.get(slot.id) ?? [];
     const menuName = slot.menu_id ? menuMap.get(slot.menu_id)?.name ?? 'メニュー未設定' : 'メニュー未設定';
+    if (slotReservations.length === 0 && !shouldKeepEmptySlot(menuName)) return [];
     const capacity = effectiveCapacity(menuName, slot.capacity);
-    return {
+    return [{
       id: slot.id,
       startsAt: slot.starts_at,
       endsAt: slot.ends_at,
@@ -88,7 +97,7 @@ export async function GET(request: Request) {
           createdAt: reservation.created_at
         };
       })
-    };
+    }];
   });
 
   return NextResponse.json({ ok: true, start: start.toISOString(), end: end.toISOString(), slots: calendarSlots });
