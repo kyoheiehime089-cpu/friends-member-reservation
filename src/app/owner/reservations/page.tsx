@@ -1,4 +1,4 @@
-import { OwnerCalendarOperational as OwnerReservationsCalendar } from '@/components/OwnerCalendarOperational';
+import { OwnerCalendarConfirmed as OwnerReservationsCalendar } from '@/components/OwnerCalendarConfirmed';
 
 export default function Page() {
   return <OwnerReservationsCalendar />;
