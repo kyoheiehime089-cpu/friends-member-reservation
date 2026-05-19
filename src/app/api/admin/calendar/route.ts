@@ -18,6 +18,11 @@ function parseDate(value: string | null, fallback: Date) {
   return Number.isNaN(date.getTime()) ? fallback : date;
 }
 
+function reservationKey(slotId?: string | null, memberId?: string | null) {
+  if (!slotId || !memberId) return '';
+  return `${slotId}:${memberId}`;
+}
+
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
@@ -50,11 +55,23 @@ export async function GET(request: Request) {
   const slotIds = slots.map((slot) => slot.id);
   const menuIds = Array.from(new Set(slots.map((slot) => slot.menu_id).filter(Boolean))) as string[];
 
-  const reservations: Reservation[] = slotIds.length ? (((await db
+  const allReservations: Reservation[] = slotIds.length ? (((await db
     .from('reservations')
     .select('id,reservation_slot_id,member_id,status,created_at')
-    .in('reservation_slot_id', slotIds)
-    .eq('status', 'booked')).data ?? []) as Reservation[]) : [];
+    .in('reservation_slot_id', slotIds)).data ?? []) as Reservation[]) : [];
+
+  const cancelledKeys = new Set(
+    allReservations
+      .filter((reservation) => reservation.status === 'cancelled')
+      .map((reservation) => reservationKey(reservation.reservation_slot_id, reservation.member_id))
+      .filter(Boolean)
+  );
+
+  const reservations = allReservations.filter((reservation) => {
+    if (reservation.status !== 'booked') return false;
+    const key = reservationKey(reservation.reservation_slot_id, reservation.member_id);
+    return !key || !cancelledKeys.has(key);
+  });
 
   const memberIds = Array.from(new Set(reservations.map((reservation) => reservation.member_id).filter(Boolean))) as string[];
   const members: Member[] = memberIds.length ? (((await db.from('members').select('id,full_name,email,plan_id').in('id', memberIds)).data ?? []) as Member[]) : [];
@@ -74,6 +91,7 @@ export async function GET(request: Request) {
   const calendarSlots = slots.flatMap((slot) => {
     const slotReservations = reservationsBySlot.get(slot.id) ?? [];
     const menuName = slot.menu_id ? menuMap.get(slot.menu_id)?.name ?? 'メニュー未設定' : 'メニュー未設定';
+    if (slot.is_open === false && slotReservations.length === 0) return [];
     if (slotReservations.length === 0 && !shouldKeepEmptySlot(menuName)) return [];
     const capacity = effectiveCapacity(menuName, slot.capacity);
     return [{
