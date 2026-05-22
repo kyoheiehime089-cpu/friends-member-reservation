@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient, requireAdmin } from '@/lib/adminServer';
 import { effectiveCapacity } from '@/lib/effectiveCapacity';
-import { ensureYogaSlotsForRange, shouldKeepEmptySlot } from '@/lib/yogaSchedule';
+import { ensureFixedSlotsForRange, shouldKeepEmptySlot } from '@/lib/yogaSchedule';
 import { effectiveBookedReservations, type ReservationStateRow } from '@/lib/reservationState';
 
 export const runtime = 'nodejs';
@@ -18,6 +18,16 @@ function parseDate(value: string | null, fallback: Date) {
   return Number.isNaN(date.getTime()) ? fallback : date;
 }
 
+
+function choosePreferredSlot(a: Slot, b: Slot, reservationsBySlot: Map<string, ReservationStateRow[]>) {
+  const aBooked = (reservationsBySlot.get(a.id) ?? []).length;
+  const bBooked = (reservationsBySlot.get(b.id) ?? []).length;
+  if ((aBooked > 0) !== (bBooked > 0)) return aBooked > 0 ? a : b;
+  const aOpen = a.is_open !== false;
+  const bOpen = b.is_open !== false;
+  if (aOpen !== bOpen) return aOpen ? a : b;
+  return a.id.localeCompare(b.id) <= 0 ? a : b;
+}
 export async function GET(request: Request) {
   const admin = await requireAdmin(request);
   if (!admin.ok || !admin.config) return NextResponse.json({ ok: false, message: admin.message }, { status: admin.status });
@@ -30,7 +40,7 @@ export async function GET(request: Request) {
   const end = parseDate(url.searchParams.get('end'), defaultEnd);
   const db = createServiceClient(admin.config.supabaseUrl, admin.config.serviceKey);
 
-  try { await ensureYogaSlotsForRange(db, start, end); }
+  try { await ensureFixedSlotsForRange(db, start, end); }
   catch (error) { return NextResponse.json({ ok: false, message: error instanceof Error ? error.message : 'Yoga slot sync failed.' }, { status: 500 }); }
 
   const { data: slotRows, error: slotError } = await db
@@ -66,7 +76,15 @@ export async function GET(request: Request) {
     reservationsBySlot.set(reservation.reservation_slot_id, [...(reservationsBySlot.get(reservation.reservation_slot_id) ?? []), reservation]);
   });
 
-  const calendarSlots = slots.flatMap((slot) => {
+  const dedupedSlots = new Map<string, Slot>();
+  for (const slot of slots) {
+    if (!slot.menu_id || !slot.starts_at) continue;
+    const key = `${slot.menu_id}|${slot.starts_at}`;
+    const existing = dedupedSlots.get(key);
+    dedupedSlots.set(key, existing ? choosePreferredSlot(existing, slot, reservationsBySlot) : slot);
+  }
+
+  const calendarSlots = Array.from(dedupedSlots.values()).flatMap((slot) => {
     const slotReservations = reservationsBySlot.get(slot.id) ?? [];
     const menuName = slot.menu_id ? menuMap.get(slot.menu_id)?.name ?? 'メニュー未設定' : 'メニュー未設定';
     if (slot.is_open === false && slotReservations.length === 0) return [];
