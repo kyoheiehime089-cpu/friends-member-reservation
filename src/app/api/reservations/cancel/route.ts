@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { latestReservationsBySlotMember, type ReservationStateRow } from '@/lib/reservationState';
 
 type CancelRequestBody = {
   reservationId?: string;
@@ -104,9 +105,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: 'この予約はキャンセルできません。' }, { status: 403 });
   }
 
-  if (reservation.status === 'cancelled') {
-    return NextResponse.json({ ok: true, message: 'すでにキャンセル済みです。' });
+  if (!reservation.reservation_slot_id || !reservation.member_id) {
+    return NextResponse.json({ ok: false, message: '予約データが不正です。' }, { status: 400 });
   }
+
+  const { data: pairRows, error: pairError } = await client
+    .from('reservations')
+    .select('id,reservation_slot_id,member_id,status,created_at')
+    .eq('reservation_slot_id', reservation.reservation_slot_id)
+    .eq('member_id', reservation.member_id);
+  if (pairError) return NextResponse.json({ ok: false, message: `予約状態の確認に失敗しました: ${pairError.message}` }, { status: 400 });
+  const latest = Array.from(latestReservationsBySlotMember((pairRows ?? []) as ReservationStateRow[]).values())[0];
+  if (!latest || latest.status === 'cancelled') return NextResponse.json({ ok: true, message: 'すでにキャンセル済みです。' });
 
   if (reservation.reservation_slot_id) {
     const { data: slotData, error: slotError } = await client
@@ -125,19 +135,20 @@ export async function POST(request: Request) {
     }
   }
 
-  const { error: updateError } = await client
+  const withAudit = await client
     .from('reservations')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      cancelled_by: userData.user.id
-    })
-    .eq('id', reservationId)
-    .eq('member_id', userData.user.id);
-
-  if (updateError) {
-    return NextResponse.json({ ok: false, message: `キャンセル処理に失敗しました: ${updateError.message}` }, { status: 400 });
+    .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: userData.user.id })
+    .eq('reservation_slot_id', reservation.reservation_slot_id)
+    .eq('member_id', userData.user.id)
+    .eq('status', 'booked');
+  if (withAudit.error) {
+    const fallback = await client.from('reservations').update({ status: 'cancelled' }).eq('reservation_slot_id', reservation.reservation_slot_id).eq('member_id', userData.user.id).eq('status', 'booked');
+    if (fallback.error) return NextResponse.json({ ok: false, message: `キャンセル処理に失敗しました: ${fallback.error.message}` }, { status: 400 });
   }
+
+  const { count: remainCount, error: verifyError } = await client.from('reservations').select('id', { count: 'exact', head: true }).eq('reservation_slot_id', reservation.reservation_slot_id).eq('member_id', userData.user.id).eq('status', 'booked');
+  if (verifyError) return NextResponse.json({ ok: false, message: `キャンセル後確認に失敗しました: ${verifyError.message}` }, { status: 400 });
+  if ((remainCount ?? 0) > 0) return NextResponse.json({ ok: false, message: 'キャンセル後も予約が残っています。再度お試しください。' }, { status: 409 });
 
   return NextResponse.json({ ok: true, message: 'キャンセルしました。' });
 }

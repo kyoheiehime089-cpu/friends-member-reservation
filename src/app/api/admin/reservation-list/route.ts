@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient, requireAdmin } from '@/lib/adminServer';
+import { latestReservationsBySlotMember, type ReservationStateRow } from '@/lib/reservationState';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
 
   if (error) return NextResponse.json({ ok: false, message: `予約一覧の取得に失敗しました: ${error.message}` }, { status: 500 });
 
-  const rows = (reservations ?? []) as Reservation[];
+  const rows = Array.from(latestReservationsBySlotMember((reservations ?? []) as ReservationStateRow[]).values()) as Reservation[];
   const slotIds = Array.from(new Set(rows.map((r) => r.reservation_slot_id).filter(Boolean))) as string[];
   const memberIds = Array.from(new Set(rows.map((r) => r.member_id).filter(Boolean))) as string[];
 
