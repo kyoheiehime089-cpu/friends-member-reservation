@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { canMemberBookByStatus, getMemberStatusLabel } from '@/lib/memberStatus';
 import { effectiveCapacity } from '@/lib/effectiveCapacity';
+import { effectiveBookedCountForSlot, latestReservationsBySlotMember, type ReservationStateRow } from '@/lib/reservationState';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,7 +12,7 @@ const MAX_FUTURE_BOOKINGS = 2;
 const dateParts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: TZ });
 
 type Slot = { id: string; store_id: string | null; menu_id: string | null; starts_at: string; ends_at: string | null; capacity: number; is_open: boolean | null };
-type Reservation = { id: string; reservation_slot_id: string | null };
+type Reservation = { id: string; reservation_slot_id: string | null; member_id: string | null; status: string | null; created_at: string | null };
 type Member = { id: string; plan_id: string | null; status: string | null };
 type Plan = { name: string; weekly_limit: number | null; unlimited: boolean | null; is_active: boolean | null };
 
@@ -65,9 +66,10 @@ export async function POST(request: Request) {
   }
   if (!canMemberBookByStatus(member.status)) return NextResponse.json({ ok: false, message: `現在の会員ステータスは「${getMemberStatusLabel(member.status)}」です。予約をご希望の場合はスタッフにご連絡ください。` }, { status: 403 });
 
-  const { data: allReservations, error: reservationReadError } = await db.from('reservations').select('id,reservation_slot_id').eq('member_id', user.id).eq('status', 'booked');
+  const { data: allReservations, error: reservationReadError } = await db.from('reservations').select('id,reservation_slot_id,member_id,status,created_at').eq('member_id', user.id);
   if (reservationReadError) return NextResponse.json({ ok: false, message: `予約履歴の確認に失敗しました: ${reservationReadError.message}` }, { status: 400 });
-  const reservations = (allReservations ?? []) as Reservation[];
+  const latestOwnRows = Array.from(latestReservationsBySlotMember((allReservations ?? []) as ReservationStateRow[]).values());
+  const reservations = latestOwnRows.filter((r) => r.member_id === user.id && r.status === 'booked') as Reservation[];
   const existingSlotIds = Array.from(new Set(reservations.map((r) => r.reservation_slot_id).filter(Boolean))) as string[];
   let existingSlots: { id: string; starts_at: string | null; ends_at: string | null }[] = [];
   if (existingSlotIds.length > 0) { const { data } = await db.from('reservation_slots').select('id,starts_at,ends_at').in('id', existingSlotIds); existingSlots = (data ?? []) as { id: string; starts_at: string | null; ends_at: string | null }[]; }
@@ -86,8 +88,10 @@ export async function POST(request: Request) {
     }
   }
 
-  const { data: bookedRows } = await db.from('reservations').select('id').eq('reservation_slot_id', slot.id).eq('status', 'booked');
-  if ((bookedRows?.length ?? 0) >= capacity) return NextResponse.json({ ok: false, message: 'この枠は満席になりました。別の枠をお選びください。' }, { status: 409 });
+  const { data: slotReservationRows, error: slotReservationError } = await db.from('reservations').select('id,reservation_slot_id,member_id,status,created_at').eq('reservation_slot_id', slot.id);
+  if (slotReservationError) return NextResponse.json({ ok: false, message: `予約枠の予約状況確認に失敗しました: ${slotReservationError.message}` }, { status: 400 });
+  const effectiveBookedCount = effectiveBookedCountForSlot(Array.from(latestReservationsBySlotMember((slotReservationRows ?? []) as ReservationStateRow[]).values()), slot.id);
+  if (effectiveBookedCount >= capacity) return NextResponse.json({ ok: false, message: 'この枠は満席になりました。別の枠をお選びください。' }, { status: 409 });
   const { data: created, error: createError } = await userClient.from('reservations').insert({ reservation_slot_id: slot.id, member_id: user.id, status: 'booked', created_by: user.id }).select('id,member_id').single();
   if (createError || !created) return NextResponse.json({ ok: false, message: `予約処理でエラーが発生しました: ${createError?.message ?? '保存に失敗しました。'}` }, { status: 400 });
   return NextResponse.json({ ok: true, reservationId: created.id, memberMail: 'disabled', adminMail: 'disabled' });

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
 import { getSupabaseClient } from '@/lib/supabaseClient';
+import { latestReservationsBySlotMember } from '@/lib/reservationState';
 
 type ReservationRow = {
   id: string;
@@ -122,9 +123,8 @@ export default function MyReservationsPage() {
 
     const { data, error } = await client
       .from('reservations')
-      .select('id,reservation_slot_id,status,created_at')
+      .select('id,reservation_slot_id,member_id,status,created_at')
       .eq('member_id', userData.user.id)
-      .eq('status', 'booked')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -133,7 +133,8 @@ export default function MyReservationsPage() {
       return;
     }
 
-    const nextReservations = (data ?? []) as ReservationRow[];
+    const latest = Array.from(latestReservationsBySlotMember((data ?? []) as never[]).values()) as ReservationRow[];
+    const nextReservations = latest.filter((row) => row.status === 'booked');
     setReservations(nextReservations);
 
     const slotIds = Array.from(new Set(nextReservations.map((reservation) => reservation.reservation_slot_id).filter(Boolean))) as string[];
@@ -225,11 +226,10 @@ export default function MyReservationsPage() {
       return;
     }
 
-    const { error } = await client
-      .from('reservations')
-      .update({ status: 'cancelled' })
-      .eq('id', reservationId)
-      .eq('member_id', userData.user.id);
+    const token = (await client.auth.getSession()).data.session?.access_token ?? '';
+    const response = await fetch('/api/reservations/cancel', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ reservationId }) });
+    const payload = await response.json().catch(() => ({}));
+    const error = response.ok ? null : new Error(payload?.message || 'キャンセルに失敗しました');
 
     if (error) {
       setMessage(`キャンセル処理に失敗しました: ${error.message}`);

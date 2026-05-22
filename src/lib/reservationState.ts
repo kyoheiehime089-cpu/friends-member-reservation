@@ -38,6 +38,14 @@ export function effectiveBookedReservations(rows: ReservationStateRow[]) {
   return Array.from(latestReservationsBySlotMember(rows).values()).filter((row) => row.status === 'booked');
 }
 
+export function effectiveBookedForMember(rows: ReservationStateRow[], memberId: string) {
+  return rows.filter((row) => row.member_id === memberId && row.status === 'booked');
+}
+
+export function effectiveBookedCountForSlot(rows: ReservationStateRow[], slotId: string) {
+  return rows.filter((row) => row.reservation_slot_id === slotId && row.status === 'booked').length;
+}
+
 export function effectiveStatusFor(rows: ReservationStateRow[], slotId?: string | null, memberId?: string | null) {
   const key = reservationStateKey(slotId, memberId);
   if (!key) return null;
