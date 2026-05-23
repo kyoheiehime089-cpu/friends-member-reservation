@@ -170,13 +170,39 @@ export async function cancelAdminReservation(db: SupabaseClient, reservationId: 
   if (!before) throw new Error('キャンセル対象の予約が見つかりません。');
   if (!before.reservation_slot_id || !before.member_id) throw new Error('キャンセル対象の予約情報が不足しています。');
 
+  const { data: slot, error: slotError } = await db
+    .from('reservation_slots')
+    .select('id,menu_id,starts_at')
+    .eq('id', before.reservation_slot_id)
+    .maybeSingle();
+  if (slotError) throw new Error(`キャンセル対象枠の確認に失敗しました: ${slotError.message}`);
+  if (!slot?.menu_id || !slot?.starts_at) throw new Error('キャンセル対象枠の情報が不足しています。');
+
+  const logicalSlot = {
+    member_id: before.member_id as string,
+    menu_id: slot.menu_id as string,
+    starts_at: slot.starts_at as string,
+  };
+  const logicalSlotKey = `${logicalSlot.member_id}:${logicalSlot.menu_id}:${logicalSlot.starts_at}`;
+
+  const { data: logicalSlots, error: logicalSlotError } = await db
+    .from('reservation_slots')
+    .select('id')
+    .eq('menu_id', logicalSlot.menu_id)
+    .eq('starts_at', logicalSlot.starts_at);
+  if (logicalSlotError) throw new Error(`論理予約枠の取得に失敗しました: ${logicalSlotError.message}`);
+  const logicalSlotIds = (logicalSlots ?? []).map((row) => String(row.id)).filter(Boolean);
+  if (logicalSlotIds.length === 0) throw new Error('同一メニュー・同一開始時刻の予約枠が見つかりません。');
+
   const first = await db
     .from('reservations')
     .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: adminId })
-    .eq('reservation_slot_id', before.reservation_slot_id)
-    .eq('member_id', before.member_id)
+    .in('reservation_slot_id', logicalSlotIds)
+    .eq('member_id', logicalSlot.member_id)
+    .eq('status', 'booked')
     .select('id,status,reservation_slot_id,member_id');
 
+  let cancelledRows = first.data ?? [];
   if (first.error) {
     if (!isMissingColumnError(first.error, 'cancelled_at') && !isMissingColumnError(first.error, 'cancelled_by')) {
       throw new Error(`キャンセル処理に失敗しました: ${first.error.message}`);
@@ -184,10 +210,12 @@ export async function cancelAdminReservation(db: SupabaseClient, reservationId: 
     const fallback = await db
       .from('reservations')
       .update({ status: 'cancelled' })
-      .eq('reservation_slot_id', before.reservation_slot_id)
-      .eq('member_id', before.member_id)
+      .in('reservation_slot_id', logicalSlotIds)
+      .eq('member_id', logicalSlot.member_id)
+      .eq('status', 'booked')
       .select('id,status,reservation_slot_id,member_id');
     if (fallback.error) throw new Error(`キャンセル処理に失敗しました: ${fallback.error.message}`);
+    cancelledRows = fallback.data ?? [];
   }
 
   await insertCancellationMarker(db, before.reservation_slot_id, before.member_id, adminId);
@@ -195,11 +223,22 @@ export async function cancelAdminReservation(db: SupabaseClient, reservationId: 
   const { count, error: verifyError } = await db
     .from('reservations')
     .select('id', { count: 'exact', head: true })
-    .eq('reservation_slot_id', before.reservation_slot_id)
-    .eq('member_id', before.member_id)
+    .in('reservation_slot_id', logicalSlotIds)
+    .eq('member_id', logicalSlot.member_id)
     .eq('status', 'booked');
   if (verifyError) throw new Error(`キャンセル後の確認に失敗しました: ${verifyError.message}`);
   if ((count ?? 0) > 0) throw new Error('キャンセル後も予約済みデータが残っています。もう一度お試しください。');
 
-  return { id: reservationId, status: 'cancelled', reservation_slot_id: before.reservation_slot_id, member_id: before.member_id };
+  const cancelledReservationIds = cancelledRows.map((row) => String(row.id)).filter(Boolean);
+
+  return {
+    id: reservationId,
+    status: 'cancelled',
+    reservation_slot_id: before.reservation_slot_id,
+    member_id: before.member_id,
+    cancelledReservationIds,
+    cancelledCount: cancelledReservationIds.length,
+    logicalSlotKey,
+    logicalSlot,
+  };
 }
