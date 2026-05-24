@@ -38,6 +38,29 @@ export function effectiveBookedReservations(rows: ReservationStateRow[]) {
   return Array.from(latestReservationsBySlotMember(rows).values()).filter((row) => row.status === 'booked');
 }
 
+export function latestReservationsByLogicalSlotMember(
+  rows: ReservationStateRow[],
+  slotIdToLogicalKey: Map<string, string>
+) {
+  const latest = new Map<string, ReservationStateRow>();
+  for (const row of rows) {
+    if (!row.member_id || !row.reservation_slot_id) continue;
+    const logicalKey = slotIdToLogicalKey.get(String(row.reservation_slot_id));
+    if (!logicalKey) continue;
+    const key = `${logicalKey}:${String(row.member_id)}`;
+    const current = latest.get(key);
+    if (!current || isNewer(row, current)) latest.set(key, row);
+  }
+  return latest;
+}
+
+export function effectiveBookedReservationsByLogicalSlot(
+  rows: ReservationStateRow[],
+  slotIdToLogicalKey: Map<string, string>
+) {
+  return Array.from(latestReservationsByLogicalSlotMember(rows, slotIdToLogicalKey).values()).filter((row) => row.status === 'booked');
+}
+
 export function effectiveBookedForMember(rows: ReservationStateRow[], memberId: string) {
   return rows.filter((row) => row.member_id === memberId && row.status === 'booked');
 }
