@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ReservationGrid, type ReservationGridDate, type ReservationGridSlot } from '@/components/ReservationGrid';
 import { SupabaseNotice } from '@/components/SupabaseNotice';
+import { UnavailableBlocksSummary } from '@/components/UnavailableBlocksSummary';
 import { getSupabaseClient } from '@/lib/supabaseClient';
 
 type Menu = { id: string; name: string; description?: string | null; capacity: number };
@@ -156,6 +157,7 @@ export function ReserveClient() {
             <div className="flex items-start justify-between gap-3"><div><h1 className="text-2xl font-black">{selectedMenu?.name} の予約</h1><p className="text-xs font-bold text-gray-500">{dates[0]?.dateLabel}〜{dates[dates.length - 1]?.dateLabel}</p></div><button type="button" onClick={() => { setMenuId(''); setSlots([]); }} className="rounded-full border bg-white px-4 py-2 text-xs font-black">メニュー変更</button></div>
             {msg && <div className={`whitespace-pre-line rounded-2xl border p-4 text-sm font-bold ${msgClass(msg.kind)}`}>{msg.text}</div>}
             <section className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm"><div className="mb-3 grid grid-cols-4 gap-2"><button type="button" onClick={() => setOffset((v) => Math.max(0, v - (mode === 'week' ? 7 : 3)))} disabled={offset === 0} className="rounded-full border px-2 py-2 text-xs font-black disabled:opacity-40">前</button><button type="button" onClick={() => { setMode('threeDays'); setOffset(0); }} className={`rounded-full px-2 py-2 text-xs font-black ${mode === 'threeDays' ? 'bg-yellow-400' : 'border'}`}>3日</button><button type="button" onClick={() => { setMode('week'); setOffset(0); }} className={`rounded-full px-2 py-2 text-xs font-black ${mode === 'week' ? 'bg-yellow-400' : 'border'}`}>1週間</button><button type="button" onClick={() => setOffset((v) => v + (mode === 'week' ? 7 : 3))} className="rounded-full border border-gray-900 px-2 py-2 text-xs font-black">次</button></div>{loading ? <div className="rounded-2xl bg-gray-50 p-5 text-center text-sm font-bold text-gray-600">予約枠を読み込んでいます。</div> : <ReservationGrid dense dates={dates} slots={slots} submittingSlotId={savingId} timeLabels={times} onReserve={reserve} onCancel={cancelBooked} />}</section>
+            <UnavailableBlocksSummary dense dates={dates} />
           </>
         )}
       </div>
