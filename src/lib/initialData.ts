@@ -45,7 +45,7 @@ type SampleSlot = {
 export const sampleSlots: SampleSlot[] = [
   { id: '1', date: '2026-05-13', time: '18:30', menuId: 'semi-personal', reserved: 2 },
   { id: '2', date: '2026-05-13', time: '19:20', menuId: 'semi-personal', reserved: 5 },
-  { id: '5', date: '2026-05-14', time: '18:30', menuId: 'semi-personal', reserved: 0, isOpen: false },
+  { id: '5', date: '2026-05-18', time: '18:30', menuId: 'semi-personal', reserved: 0, isOpen: false },
   { id: '6', date: '2026-05-15', time: '20:10', menuId: 'semi-personal', reserved: 1, bookedByCurrentUser: true },
   { id: '3', date: '2026-05-16', time: '10:00', menuId: 'yoga', reserved: 3 },
   { id: '4', date: '2026-05-17', time: '11:40', menuId: 'event', reserved: 1 }
