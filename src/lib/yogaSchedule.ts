@@ -4,6 +4,8 @@ import { getJpHolidayName } from '@/lib/jpHolidays';
 type ScheduleRule = { weekdays: number[]; times: string[]; durationMinutes: number; capacity: number };
 type MenuRow = { id: string; name: string; default_capacity: number | null; is_active: boolean | null };
 type ExistingSlot = { id: string; menu_id: string; starts_at: string; is_open: boolean | null; created_at: string | null };
+type ReservationSlotRow = { id: string; menu_id: string; starts_at: string; is_open: boolean | null };
+type ReservationRow = { reservation_slot_id: string };
 
 const yogaScheduleRules: ScheduleRule[] = [
   { weekdays: [1], times: ['09:00'], durationMinutes: 40, capacity: 7 },
@@ -49,9 +51,9 @@ async function semiPersonalMenus(db: SupabaseClient) {
 function isHoliday(dateKey: string) { return Boolean(getJpHolidayName(dateKey)); }
 
 function buildSemiPersonalTimes(weekday: number, dateKey?: string) {
-  if (weekday === 4 && !dateKey) return [];
+  // friends のセミパーソナルは木曜休み。木曜祝日も必ず生成しない。
+  if (weekday === 4) return [];
   if (dateKey && isHoliday(dateKey)) return semiPersonalWeekendTimes;
-  if (weekday === 4) return []; // Thursday closed
   if (weekday === 0 || weekday === 6) return semiPersonalWeekendTimes;
   return semiPersonalWeekdayTimes;
 }
@@ -100,6 +102,44 @@ export function fixedUnavailableBlocksForDate(dateKey: string): UnavailableBlock
     source: 'semi-personal' as const
   }));
   return mergeBlocks([...yogaBlocks, ...semiBlocks]);
+}
+
+async function cleanupThursdaySemiPersonalSlots(db: SupabaseClient, menuRows: { id: string; capacity: number }[]) {
+  if (!menuRows.length) return;
+
+  const { data: slotRows, error: slotError } = await db
+    .from('reservation_slots')
+    .select('id,menu_id,starts_at,is_open')
+    .in('menu_id', menuRows.map((menu) => menu.id))
+    .gte('starts_at', new Date().toISOString());
+
+  if (slotError) throw new Error(`木曜セミパーソナル枠の確認に失敗しました: ${slotError.message}`);
+
+  const thursdaySlots = ((slotRows ?? []) as ReservationSlotRow[]).filter((slot) => weekdayFromKey(localDateKey(new Date(slot.starts_at))) === 4);
+  if (!thursdaySlots.length) return;
+
+  const slotIds = thursdaySlots.map((slot) => slot.id);
+  const { data: reservationRows, error: reservationError } = await db
+    .from('reservations')
+    .select('reservation_slot_id')
+    .in('reservation_slot_id', slotIds)
+    .eq('status', 'booked');
+
+  if (reservationError) throw new Error(`木曜セミパーソナル枠の予約確認に失敗しました: ${reservationError.message}`);
+
+  const bookedSlotIds = new Set(((reservationRows ?? []) as ReservationRow[]).map((row) => row.reservation_slot_id));
+  const emptySlotIds = slotIds.filter((slotId) => !bookedSlotIds.has(slotId));
+  const bookedIds = Array.from(bookedSlotIds);
+
+  if (emptySlotIds.length) {
+    const { error } = await db.from('reservation_slots').delete().in('id', emptySlotIds);
+    if (error) throw new Error(`予約なし木曜セミパーソナル枠の削除に失敗しました: ${error.message}`);
+  }
+
+  if (bookedIds.length) {
+    const { error } = await db.from('reservation_slots').update({ is_open: false }).in('id', bookedIds);
+    if (error) throw new Error(`予約済み木曜セミパーソナル枠の受付停止に失敗しました: ${error.message}`);
+  }
 }
 
 async function ensureFixedSlots(db: SupabaseClient, start: Date, end: Date, menuRows: { id: string; capacity: number }[], ruleForDay: (weekday: number, dateKey: string) => { time: string; durationMinutes: number; capacity: number }[]) {
@@ -165,6 +205,7 @@ export async function ensureFixedSlotsForRange(db: SupabaseClient, start: Date, 
   await ensureFixedSlots(db, start, end, [yoga], (weekday, dateKey) => buildYogaTimes(weekday, dateKey));
 
   const semiMenus = await semiPersonalMenus(db);
+  await cleanupThursdaySemiPersonalSlots(db, semiMenus);
   await ensureFixedSlots(db, start, end, semiMenus, (weekday, dateKey) => buildSemiPersonalTimes(weekday, dateKey).map((time) => ({ time, durationMinutes: 40, capacity: 5 })));
 }
 
