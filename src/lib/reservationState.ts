@@ -16,11 +16,15 @@ function timeValue(value?: string | null) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function isNewer(a: ReservationStateRow, b: ReservationStateRow) {
+function compareNewestFirst(a: ReservationStateRow, b: ReservationStateRow) {
   const at = timeValue(a.created_at);
   const bt = timeValue(b.created_at);
-  if (at !== bt) return at > bt;
-  return String(a.id) > String(b.id);
+  if (at !== bt) return bt - at;
+  return String(b.id).localeCompare(String(a.id));
+}
+
+function isNewer(a: ReservationStateRow, b: ReservationStateRow) {
+  return compareNewestFirst(a, b) < 0;
 }
 
 export function latestReservationsBySlotMember(rows: ReservationStateRow[]) {
@@ -35,7 +39,9 @@ export function latestReservationsBySlotMember(rows: ReservationStateRow[]) {
 }
 
 export function effectiveBookedReservations(rows: ReservationStateRow[]) {
-  return Array.from(latestReservationsBySlotMember(rows).values()).filter((row) => row.status === 'booked');
+  return Array.from(latestReservationsBySlotMember(rows).values())
+    .filter((row) => row.status === 'booked')
+    .sort(compareNewestFirst);
 }
 
 export function latestReservationsByLogicalSlotMember(
@@ -58,11 +64,15 @@ export function effectiveBookedReservationsByLogicalSlot(
   rows: ReservationStateRow[],
   slotIdToLogicalKey: Map<string, string>
 ) {
-  return Array.from(latestReservationsByLogicalSlotMember(rows, slotIdToLogicalKey).values()).filter((row) => row.status === 'booked');
+  return Array.from(latestReservationsByLogicalSlotMember(rows, slotIdToLogicalKey).values())
+    .filter((row) => row.status === 'booked')
+    .sort(compareNewestFirst);
 }
 
 export function effectiveBookedForMember(rows: ReservationStateRow[], memberId: string) {
-  return rows.filter((row) => row.member_id === memberId && row.status === 'booked');
+  return rows
+    .filter((row) => row.member_id === memberId && row.status === 'booked')
+    .sort(compareNewestFirst);
 }
 
 export function effectiveBookedCountForSlot(rows: ReservationStateRow[], slotId: string) {
