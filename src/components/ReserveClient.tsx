@@ -1,5 +1,6 @@
 "use client";
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { ReservationGrid, type ReservationGridDate, type ReservationGridSlot } from '@/components/ReservationGrid';
@@ -30,6 +31,7 @@ function makeDates(offset: number, mode: Mode): ReservationGridDate[] {
 function msgClass(kind: Msg['kind']) { return kind === 'success' ? 'border-green-200 bg-green-50 text-green-900' : kind === 'error' ? 'border-red-200 bg-red-50 text-red-900' : 'border-yellow-200 bg-yellow-50 text-yellow-900'; }
 function menuOrder(name: string) { if (name.includes('セミ')) return 0; if (name.includes('ヨガ')) return 1; if (name.includes('イベント')) return 2; return 9; }
 function toSafeMessage(text: string) { if (text.includes('満席') || text.includes('定員')) return 'この枠は満席です。'; if (text.includes('unique') || text.includes('duplicate')) return 'この枠はすでに予約済みです。'; return text || '予約処理でエラーが発生しました。'; }
+function isStressResetMenu(menu?: Menu | null) { return Boolean(menu?.name && (menu.name.includes('ストレス') || menu.name.includes('リセット'))); }
 
 export function ReserveClient() {
   const [menus, setMenus] = useState<Menu[]>([]);
@@ -43,6 +45,7 @@ export function ReserveClient() {
 
   const dates = useMemo(() => makeDates(offset, mode), [offset, mode]);
   const selectedMenu = useMemo(() => menus.find((m) => m.id === menuId), [menus, menuId]);
+  const showBlockPuzzleLink = isStressResetMenu(selectedMenu);
   const times = useMemo(() => Array.from(new Set([...baseTimes, ...slots.map((s) => s.timeLabel)])).sort((a, b) => a.localeCompare(b)), [slots]);
 
   const show = useCallback((kind: Msg['kind'], text: string) => {
@@ -158,6 +161,15 @@ export function ReserveClient() {
             {msg && <div className={`whitespace-pre-line rounded-2xl border p-4 text-sm font-bold ${msgClass(msg.kind)}`}>{msg.text}</div>}
             <section className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm"><div className="mb-3 grid grid-cols-4 gap-2"><button type="button" onClick={() => setOffset((v) => Math.max(0, v - (mode === 'week' ? 7 : 3)))} disabled={offset === 0} className="rounded-full border px-2 py-2 text-xs font-black disabled:opacity-40">前</button><button type="button" onClick={() => { setMode('threeDays'); setOffset(0); }} className={`rounded-full px-2 py-2 text-xs font-black ${mode === 'threeDays' ? 'bg-yellow-400' : 'border'}`}>3日</button><button type="button" onClick={() => { setMode('week'); setOffset(0); }} className={`rounded-full px-2 py-2 text-xs font-black ${mode === 'week' ? 'bg-yellow-400' : 'border'}`}>1週間</button><button type="button" onClick={() => setOffset((v) => v + (mode === 'week' ? 7 : 3))} className="rounded-full border border-gray-900 px-2 py-2 text-xs font-black">次</button></div>{loading ? <div className="rounded-2xl bg-gray-50 p-5 text-center text-sm font-bold text-gray-600">予約枠を読み込んでいます。</div> : <ReservationGrid dense dates={dates} slots={slots} submittingSlotId={savingId} timeLabels={times} onReserve={reserve} onCancel={cancelBooked} />}</section>
             <UnavailableBlocksSummary dense dates={dates} />
+            {showBlockPuzzleLink && (
+              <section className="rounded-3xl border border-yellow-200 bg-yellow-50 p-4 shadow-sm" aria-label="ストレスリセット">
+                <p className="text-sm font-bold text-yellow-900">ストレスリセット</p>
+                <p className="mt-1 text-sm font-semibold text-gray-700">予約確認のあとに、既存のブロックパズルで気分転換できます。</p>
+                <Link href="/block-puzzle" className="mt-4 block w-full rounded-full bg-gray-950 px-6 py-4 text-center text-base font-black text-white shadow-sm active:scale-95 sm:inline-block sm:w-auto">
+                  ブロックパズルを開始
+                </Link>
+              </section>
+            )}
           </>
         )}
       </div>
