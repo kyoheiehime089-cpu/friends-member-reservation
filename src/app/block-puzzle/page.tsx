@@ -227,8 +227,8 @@ export default function BlockPuzzlePage() {
                 <button type="button" onClick={resetGame} className="rounded-full bg-gray-950 px-5 py-3 font-bold text-white active:scale-95">
                   リセット
                 </button>
-                <Link href="/" className="rounded-full bg-gray-100 px-5 py-3 text-center font-bold text-gray-900">
-                  トップへ戻る
+                <Link href="/reserve" className="rounded-full bg-gray-100 px-5 py-3 text-center font-bold text-gray-900">
+                  会員画面へ戻る
                 </Link>
               </div>
             </div>
