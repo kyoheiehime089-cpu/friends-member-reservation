@@ -65,6 +65,10 @@ export async function GET(request: Request) {
       memberEmail: member?.email ?? 'メール未設定',
       planName: plan?.name ?? 'プラン未設定'
     };
+  }).sort((a, b) => {
+    const aTime = a.startsAt ? new Date(a.startsAt).getTime() : Number.NEGATIVE_INFINITY;
+    const bTime = b.startsAt ? new Date(b.startsAt).getTime() : Number.NEGATIVE_INFINITY;
+    return bTime - aTime;
   });
 
   return NextResponse.json({ ok: true, reservations: list });
