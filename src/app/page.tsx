@@ -20,6 +20,7 @@ export default function HomePage() {
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <Link href="/login" className="rounded-full bg-gray-950 px-6 py-3 text-center font-bold text-white">ログイン</Link>
               <Link href="/reserve" className="rounded-full bg-white px-6 py-3 text-center font-bold text-gray-950">予約画面を見る</Link>
+              <Link href="/block-puzzle" className="rounded-full bg-yellow-100 px-6 py-3 text-center font-bold text-gray-950 ring-2 ring-yellow-700/20">ブロックパズルを開く</Link>
             </div>
           </div>
         </section>
