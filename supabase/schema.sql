@@ -39,6 +39,15 @@ create table if not exists public.members (
   updated_at timestamptz not null default now()
 );
 
+
+create table if not exists public.line_users (
+  line_user_id text primary key,
+  display_name text,
+  member_status text not null default 'guest' check (member_status in ('guest','member')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.admin_users (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
@@ -173,6 +182,7 @@ alter table public.stores enable row level security;
 alter table public.menus enable row level security;
 alter table public.plans enable row level security;
 alter table public.members enable row level security;
+alter table public.line_users enable row level security;
 alter table public.admin_users enable row level security;
 alter table public.reservation_rules enable row level security;
 alter table public.reservation_slots enable row level security;
@@ -191,6 +201,9 @@ drop policy if exists "public read open slots" on public.reservation_slots;
 drop policy if exists "public read reservation slots" on public.reservation_slots;
 create policy "public read reservation slots" on public.reservation_slots for select using (true);
 
+drop policy if exists "admins manage line users" on public.line_users;
+create policy "admins manage line users" on public.line_users for all using (public.is_admin()) with check (public.is_admin());
+
 drop policy if exists "members read own profile" on public.members;
 create policy "members read own profile" on public.members for select using (id = auth.uid() or public.is_admin());
 drop policy if exists "members update own profile" on public.members;
@@ -207,7 +220,7 @@ create policy "members cancel own reservations" on public.reservations for updat
 do $$
 declare table_name text;
 begin
-  foreach table_name in array array['stores','menus','plans','members','admin_users','reservation_rules','reservation_slots','reservations','notification_settings','mail_logs','audit_logs','settings_change_logs'] loop
+  foreach table_name in array array['stores','menus','plans','members','line_users','admin_users','reservation_rules','reservation_slots','reservations','notification_settings','mail_logs','audit_logs','settings_change_logs'] loop
     execute format('drop policy if exists "admin manage %1$s" on public.%1$I', table_name);
     execute format('create policy "admin manage %1$s" on public.%1$I for all using (public.is_admin()) with check (public.is_admin())', table_name);
   end loop;

@@ -7,11 +7,12 @@ import { selectableBasePlans, selectedPlanIdsFromMemberPlan, selectExclusivePlan
 import { normalizeMemberStatus } from '@/lib/memberStatus';
 
 type MemberRow = { id: string; full_name: string | null; email: string | null; status: string | null; plan_id: string | null; created_at: string | null; updated_at: string | null };
+type LineUserRow = { line_user_id: string; display_name: string | null; member_status: string | null; created_at: string | null; updated_at: string | null };
 type PlanRow = PlanLike & { weekly_limit: number | null; unlimited: boolean | null; is_active: boolean | null };
 type Draft = { planIds: string[]; status: string };
 type NewMember = { fullName: string; email: string; password: string; planIds: string[]; status: string };
 
-type ResponseBody = { ok?: boolean; message?: string; members?: MemberRow[]; plans?: PlanRow[]; statuses?: string[]; member?: MemberRow };
+type ResponseBody = { ok?: boolean; message?: string; members?: MemberRow[]; plans?: PlanRow[]; statuses?: string[]; member?: MemberRow; lineUsers?: LineUserRow[]; lineUser?: LineUserRow; richMenu?: { ok?: boolean; skipped?: boolean; message?: string } };
 
 const emptyNew: NewMember = { fullName: '', email: '', password: '', planIds: [], status: '有効' };
 const defaultStatuses = ['有効', '休止中', '休会中'];
@@ -34,6 +35,7 @@ function sameIds(a: string[], b: string[]) {
 
 export function AdminMembersClient() {
   const [members, setMembers] = useState<MemberRow[]>([]);
+  const [lineUsers, setLineUsers] = useState<LineUserRow[]>([]);
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [statuses, setStatuses] = useState(defaultStatuses);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -64,7 +66,10 @@ export function AdminMembersClient() {
       setMembers(nextMembers);
       setStatuses(result.statuses?.length ? result.statuses : defaultStatuses);
       setDrafts(Object.fromEntries(nextMembers.map((member) => [member.id, { planIds: selectedPlanIdsFromMemberPlan(nextPlans, member.plan_id), status: normalizeMemberStatus(member.status) }])));
-      setMessage(nextMembers.length ? '複数プランの付与・状態変更・会員削除ができます。' : '会員がまだ登録されていません。');
+      const lineResponse = await adminFetch('/api/admin/line-users');
+      const lineResult = await lineResponse.json().catch(() => ({})) as ResponseBody;
+      if (lineResponse.ok && lineResult.ok) setLineUsers(lineResult.lineUsers ?? []);
+      setMessage(nextMembers.length || (lineResult.lineUsers?.length ?? 0) ? '複数プランの付与・状態変更・LINEユーザーの入会切替ができます。' : '会員がまだ登録されていません。');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '会員情報の取得に失敗しました。');
     } finally {
@@ -121,6 +126,23 @@ export function AdminMembersClient() {
     }
   }
 
+
+  async function saveLineUser(lineUser: LineUserRow, memberStatus: string) {
+    setSavingId(lineUser.line_user_id);
+    setMessage('LINEユーザーの状態を保存しています。');
+    try {
+      const response = await adminFetch('/api/admin/line-users', { method: 'PATCH', body: JSON.stringify({ lineUserId: lineUser.line_user_id, memberStatus }) });
+      const result = await response.json().catch(() => ({})) as ResponseBody;
+      if (!response.ok || !result.ok || !result.lineUser) { setMessage(result.message ?? 'LINEユーザーの更新に失敗しました。'); return; }
+      setLineUsers((current) => current.map((item) => item.line_user_id === result.lineUser?.line_user_id ? result.lineUser : item));
+      setMessage(memberStatus === 'member' ? '入会済みに変更し、会員用リッチメニューへ切り替えました。' : 'ゲストに変更しました。');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'LINEユーザーの更新に失敗しました。');
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   async function deleteMember(member: MemberRow) {
     const name = member.full_name || member.email || 'この会員';
     if (!window.confirm(`${name}を削除しますか？`)) return;
@@ -157,6 +179,17 @@ export function AdminMembersClient() {
           </div>
           <div className="mt-4"><p className="mb-2 text-sm font-black">付けるプラン 複数選択可</p>{planChecklist(newMember.planIds, (planIds) => setNewMember((v) => ({ ...v, planIds })))}</div>
           <button type="button" onClick={() => void createMember()} disabled={savingId === 'new'} className="mt-4 rounded-full bg-yellow-400 px-6 py-3 font-black disabled:opacity-50">{savingId === 'new' ? '作成中' : '会員を作成'}</button>
+        </section>
+
+        <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 className="text-xl font-black">LINEユーザー</h2><p className="text-sm font-bold text-gray-500">公式アカウントへメッセージしたユーザーを guest で保存し、入会済みにすると member に変更して会員用リッチメニューへ切り替えます。</p></div>
+            <button type="button" onClick={() => void load()} className="rounded-full bg-gray-900 px-5 py-2 font-black text-white">再読み込み</button>
+          </div>
+          <div className="grid gap-3">{lineUsers.map((lineUser) => {
+            const isSaving = savingId === lineUser.line_user_id;
+            return <div key={lineUser.line_user_id} className="rounded-2xl border border-gray-200 p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div><p className="text-lg font-black">{lineUser.display_name || '表示名未取得'}</p><p className="break-all text-xs text-gray-500">{lineUser.line_user_id}</p><p className="mt-1 text-xs font-bold text-gray-500">現在: {lineUser.member_status ?? 'guest'} / 登録 {dateLabel(lineUser.created_at)}</p></div><div className="flex flex-wrap gap-2"><button type="button" disabled={isSaving || lineUser.member_status === 'guest'} onClick={() => void saveLineUser(lineUser, 'guest')} className="rounded-full border border-gray-300 px-4 py-2 text-sm font-black disabled:bg-gray-100 disabled:text-gray-400">guestに戻す</button><button type="button" disabled={isSaving || lineUser.member_status === 'member'} onClick={() => void saveLineUser(lineUser, 'member')} className="rounded-full bg-yellow-400 px-4 py-2 text-sm font-black disabled:bg-gray-200 disabled:text-gray-400">入会済みにする</button></div></div></div>;
+          })}{lineUsers.length === 0 && <div className="rounded-2xl bg-gray-50 p-6 text-center font-bold text-gray-500">Webhookで取得したLINEユーザーはまだいません。</div>}</div>
         </section>
         <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><input className="rounded-xl border px-3 py-2" placeholder="会員名・メールで検索" value={search} onChange={(e) => setSearch(e.target.value)} /><button type="button" onClick={() => void load()} className="rounded-full bg-gray-900 px-5 py-2 font-black text-white">再読み込み</button></div>

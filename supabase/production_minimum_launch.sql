@@ -39,6 +39,15 @@ create table if not exists public.members (
   updated_at timestamptz not null default now()
 );
 
+
+create table if not exists public.line_users (
+  line_user_id text primary key,
+  display_name text,
+  member_status text not null default 'guest' check (member_status in ('guest','member')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.admin_users (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
@@ -231,6 +240,7 @@ for each row execute function public.set_reservation_cancel_metadata();
 alter table public.stores enable row level security;
 alter table public.plans enable row level security;
 alter table public.members enable row level security;
+alter table public.line_users enable row level security;
 alter table public.admin_users enable row level security;
 alter table public.menus enable row level security;
 alter table public.reservation_slots enable row level security;
@@ -248,6 +258,9 @@ create policy "public read active menus" on public.menus for select using (is_ac
 
 drop policy if exists "public read reservation slots" on public.reservation_slots;
 create policy "public read reservation slots" on public.reservation_slots for select using (true);
+
+drop policy if exists "admins manage line users" on public.line_users;
+create policy "admins manage line users" on public.line_users for all using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists "members read own profile" on public.members;
 create policy "members read own profile" on public.members for select using (id = auth.uid() or public.is_admin());
